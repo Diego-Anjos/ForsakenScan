@@ -5,15 +5,15 @@ from datetime import datetime
 # ------------------------------------------------------------
 # 1) Calcula o caminho absoluto para a pasta raiz do projeto
 # ------------------------------------------------------------
-# Path(__file__)   --> /mnt/data/pages/05_Sobre.py
-# .parent           --> /mnt/data/pages
-# .parent.parent    --> /mnt/data
-PROJECT_ROOT = Path(__file__).parent.parent
+# Path(__file__)   --> frontend/pages/05_Sobre.py
+# .parent           --> frontend/pages
+# .parent.parent    --> frontend
+FRONTEND_ROOT = Path(__file__).parent.parent
 
 # ------------------------------------------------------------
 # 2) Define o path completo para o logo
 # ------------------------------------------------------------
-LOGO_PATH = PROJECT_ROOT / "Logo" / "Logo de ForsakenScan com Olho.png"
+LOGO_PATH = FRONTEND_ROOT / "Logo" / "Logo de ForsakenScan com Olho.png"
 
 # ------------------------------------------------------------
 # 3) Exibe o logo

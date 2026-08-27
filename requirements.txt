@@ -1,0 +1,13 @@
+streamlit
+fastapi
+uvicorn
+supabase
+python-dotenv
+certifi
+sqlalchemy
+pydantic
+pandas
+numpy
+plotly
+faker
+streamlit-aggrid

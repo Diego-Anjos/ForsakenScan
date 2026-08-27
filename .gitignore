@@ -1,13 +1,102 @@
-# Byte-code
+# =========================
+# Variáveis de Ambiente / Segredos
+# =========================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials/
+**/credentials.json
+**/service-account*.json
+**/firebase*.json
+*_secret*
+*_secrets*
+
+# =========================
+# Ambientes Virtuais
+# =========================
+venv/
+env/
+.venv/
+ENV/
+Scripts/
+# Pastas típicas de venv (não ignore código do projeto em lib/ se existir)
+# Preferimos os padrões Python abaixo em vez de lib/ genérico no root do app
+
+# =========================
+# Python / Dependências
+# =========================
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+pip-wheel-metadata/
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
 
-# Ambiente virtual
-venv/
+# =========================
+# Streamlit
+# =========================
+.streamlit/secrets.toml
+.streamlit/config.toml
 
-# Configurações locais VS Code
-.vscode/
-
-# Logs / bancos temporários
+# =========================
+# Logs e Arquivos Temporários
+# =========================
 *.log
+*.sqlite3
 *.db
+*.tmp
+*.temp
+tmp/
+temp/
+.cache/
+
+# =========================
+# Dados locais sensíveis / dumps
+# =========================
+*.csv.bak
+*.sql.bak
+dump.sql
+*.dump
+
+# =========================
+# Sistema Operacional / IDEs
+# =========================
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# =========================
+# Coverage / Testes
+# =========================
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

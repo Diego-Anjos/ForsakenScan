@@ -1,18 +1,23 @@
 # ========================================
-# 03_Perfil.py – Área do usuário
+# 03_Perfil.py – Área do usuário (Supabase)
 # ========================================
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from uuid import uuid4
 import secrets, string, re
 
-from db import get_conn, get_cursor       # <- NOVO
-conn   = get_conn()  
-                 # <- NOVO
-cursor = get_cursor(dictionary=True, buffered=True)     # <- NOVO
+import sys
+from pathlib import Path
 
-from fraude import avaliar_transacao
+_FRONTEND = Path(__file__).resolve().parent.parent
+if str(_FRONTEND) not in sys.path:
+    sys.path.insert(0, str(_FRONTEND))
+import bootstrap  # noqa: F401 — raiz no sys.path
+from backend.db import get_supabase_client
+from backend.fraude import avaliar_transacao
+
+supabase = get_supabase_client()
 
 
 # ------------------------------------------------------------------
@@ -55,19 +60,29 @@ def validar_cpf(cpf: str) -> bool:
     cpf = re.sub(r'[^0-9]', '', cpf)
     return len(cpf) == 11
 
+def only_digits(x: str) -> str:
+    return re.sub(r"\D", "", x or "")
+
+def _as_date(val):
+    """Normaliza data vinda da API (str/date/datetime) para date."""
+    if val is None:
+        return None
+    if isinstance(val, date) and not isinstance(val, datetime):
+        return val
+    return pd.to_datetime(val).date()
+
 def registrar_fato(acao, desc, campo=None, valor_antigo=None, valor_novo=None):
     try:
+        row = {
+            "user_id": user_id,
+            "acao": acao,
+            "descricao": desc,
+        }
         if campo:
-            cursor.execute(
-                """INSERT INTO fatos_usuarios 
-                   (user_id, acao, descricao, campo, valor_antigo, valor_novo) 
-                   VALUES (%s, %s, %s, %s, %s, %s)""",
-                (user_id, acao, desc, campo, valor_antigo, valor_novo))
-        else:
-            cursor.execute(
-                "INSERT INTO fatos_usuarios (user_id, acao, descricao) VALUES (%s, %s, %s)",
-                (user_id, acao, desc))
-        conn.commit()
+            row["campo"] = campo
+            row["valor_antigo"] = valor_antigo
+            row["valor_novo"] = valor_novo
+        supabase.table("fatos_usuarios").insert(row).execute()
     except Exception as e:
         st.error(f"Erro ao registrar ação: {str(e)}")
 
@@ -91,22 +106,19 @@ email     = st.session_state.email
 # Carrega transações do cliente
 # ------------------------------------------------------------------
 try:
-    cursor.execute("""
-    SELECT tipo_transacao   AS tipo,
-           valor,
-           data_hora,
-           codigo,
-           banco_origem,
-           banco_destino,
-           forma_pagamento,
-           suspeita,
-           motivo_suspeita
-      FROM transacoes
-     WHERE user_id = %s
-     ORDER BY data_hora DESC
-    """, (user_id,))
-
-    df = pd.DataFrame(cursor.fetchall()) if cursor.rowcount else pd.DataFrame(
+    resp = (
+        supabase.table("transacoes")
+        .select(
+            "tipo_transacao, valor, data_hora, codigo, "
+            "banco_origem, banco_destino, forma_pagamento, "
+            "suspeita, motivo_suspeita"
+        )
+        .eq("user_id", user_id)
+        .order("data_hora", desc=True)
+        .execute()
+    )
+    rows = resp.data or []
+    df = pd.DataFrame(rows) if rows else pd.DataFrame(
         columns=[
           "tipo","valor","data_hora","codigo",
           "banco_origem","banco_destino","forma_pagamento",
@@ -114,11 +126,12 @@ try:
         ]
     )
     if not df.empty:
+        df = df.rename(columns={"tipo_transacao": "tipo"})
         df["data_hora"] = pd.to_datetime(df["data_hora"])
 
     tot_tx  = len(df)
-    tot_out = df[df["tipo"].isin(["Compra","Pagamento","Transferência"])]["valor"].sum()
-    tot_in  = df[df["tipo"].isin(["Recebimento","Cash-In"])]["valor"].sum()
+    tot_out = df[df["tipo"].isin(["Compra","Pagamento","Transferência"])]["valor"].sum() if not df.empty else 0
+    tot_in  = df[df["tipo"].isin(["Recebimento","Cash-In"])]["valor"].sum() if not df.empty else 0
     saldo   = tot_in - tot_out
 except Exception as e:
     st.error(f"Erro ao carregar transações: {str(e)}")
@@ -166,14 +179,13 @@ tab_transf, tab_shop, tab_extrato, tab_loan = st.tabs(
 
 # ---------- TAB 1 (Pagamentos/Boleto) -----------------------------
 with tab_transf:
-    cur = conn.cursor(dictionary=True)
     st.markdown("### Realizar Pagamento/Transferência")
-    
+
     c_forma,c_cpf,c_val,c_pwd,c_btn = st.columns([2,2,1,1,1])
     with c_forma:
         forma = st.selectbox("Forma", FORMAS_PG, key="pg_forma")
     with c_cpf:
-        cpf_dest = st.text_input("CPF destinatário (opcional)", key="pg_cpf", 
+        cpf_dest = st.text_input("CPF destinatário (opcional)", key="pg_cpf",
                                 help="Somente números, sem pontos ou traços")
     with c_val:
         valor = st.number_input("Valor (R$)", min_value=0.01, step=10.0,
@@ -181,38 +193,47 @@ with tab_transf:
     with c_pwd:
         pwd = st.text_input("Senha", type="password", key="pg_pwd")
     with c_btn:
-        if st.button("Enviar/Emitir", key="btn_pg", 
+        if st.button("Enviar/Emitir", key="btn_pg",
                     help="Confirme os dados antes de enviar"):
             if valor <= 0:
                 st.warning("Informe valor > 0."); st.stop()
-                
-            # Validação de CPF
+
             if cpf_dest.strip() and not validar_cpf(cpf_dest):
                 st.error("CPF inválido. Digite apenas os 11 números."); st.stop()
-                
-            cursor.execute("SELECT senha FROM usuarios WHERE id=%s",(user_id,))
-            if pwd != cursor.fetchone()["senha"]:
+
+            senha_resp = (
+                supabase.table("usuarios")
+                .select("senha")
+                .eq("id", user_id)
+                .limit(1)
+                .execute()
+            )
+            if not senha_resp.data or pwd != senha_resp.data[0]["senha"]:
                 st.error("Senha incorreta."); st.stop()
-                
-            tx = {"user_id": user_id, "valor": valor, "data_hora": datetime.now()}
+
+            agora = datetime.now()
+            tx = {"user_id": user_id, "valor": valor, "data_hora": agora}
             suspeita, motivo = avaliar_transacao(tx)
 
             # Boleto depósito
             if forma == "Boleto depósito":
                 codigo = barcode44(); venc = prox_uteis(3)
                 try:
-                    cursor.execute("""
-                    INSERT INTO transacoes
-                        (user_id,valor,tipo_transacao,forma_pagamento,codigo,data_hora,
-                        localizacao,banco_origem,banco_destino,suspeita,motivo_suspeita)
-                    VALUES
-                        (%s,%s,'Cash-In','Boleto',%s,NOW(),'On-line',
-                        'Boleto','Conta Corrente',%s,%s)
-                    """, (user_id, valor, codigo, suspeita, motivo))
-                    conn.commit()
+                    supabase.table("transacoes").insert({
+                        "user_id": user_id,
+                        "valor": valor,
+                        "tipo_transacao": "Cash-In",
+                        "forma_pagamento": "Boleto",
+                        "codigo": codigo,
+                        "data_hora": agora.isoformat(),
+                        "localizacao": "On-line",
+                        "banco_origem": "Boleto",
+                        "banco_destino": "Conta Corrente",
+                        "suspeita": suspeita,
+                        "motivo_suspeita": motivo,
+                    }).execute()
                     registrar_fato("Cash-In", f"Boleto {fmt_moeda(valor)} gerado")
-                    
-                    # Mostrar comprovante
+
                     st.success("Boleto gerado com sucesso!")
                     st.markdown(f"""
                     **Comprovante de Boleto**  
@@ -233,11 +254,17 @@ with tab_transf:
                 st.error("Saldo insuficiente."); st.stop()
 
             dest = None
-            if cpf_dest.strip():
+            cpf_limpo = only_digits(cpf_dest)
+            if cpf_limpo:
                 try:
-                    cursor.execute("SELECT id,banco FROM usuarios WHERE cpf=%s",
-                                   (cpf_dest.strip(),))
-                    dest = cursor.fetchone()
+                    dest_resp = (
+                        supabase.table("usuarios")
+                        .select("id, banco")
+                        .eq("cpf", cpf_limpo)
+                        .limit(1)
+                        .execute()
+                    )
+                    dest = (dest_resp.data or [None])[0]
                     if forma in ("Pix","Transferência") and not dest:
                         st.error("CPF não encontrado."); st.stop()
                 except Exception as e:
@@ -248,57 +275,53 @@ with tab_transf:
             banco_rem = "Conta Corrente"
 
             try:
-                cursor.execute("""
-                INSERT INTO transacoes
-                    (user_id,valor,tipo_transacao,forma_pagamento,codigo,data_hora,
-                    localizacao,banco_origem,banco_destino,suspeita,motivo_suspeita)
-                VALUES
-                    (%s,%s,%s,%s,%s,NOW(),'On-line',%s,%s,%s,%s)
-                """,(
-                    user_id, valor,
-                    "Transferência" if dest else "Pagamento",
-                    forma, cod,
-                    banco_rem,
-                    dest["banco"] if dest else "Estabelecimento",
-                    suspeita, motivo
-                ))
+                supabase.table("transacoes").insert({
+                    "user_id": user_id,
+                    "valor": valor,
+                    "tipo_transacao": "Transferência" if dest else "Pagamento",
+                    "forma_pagamento": forma,
+                    "codigo": cod,
+                    "data_hora": agora.isoformat(),
+                    "localizacao": "On-line",
+                    "banco_origem": banco_rem,
+                    "banco_destino": dest["banco"] if dest else "Estabelecimento",
+                    "suspeita": suspeita,
+                    "motivo_suspeita": motivo,
+                }).execute()
 
                 if dest:
-                    cursor.execute("""
-                    INSERT INTO transacoes
-                    (user_id,valor,tipo_transacao,forma_pagamento,codigo,data_hora,
-                    localizacao,banco_origem,banco_destino,suspeita,motivo_suspeita)
-                    VALUES
-                    (%s,%s,'Recebimento',%s,%s,NOW(),'On-line',%s,%s,%s,%s)
-                    """,(
-                        dest["id"], valor,
-                        forma, cod,
-                        banco_rem, dest["banco"],
-                        suspeita, motivo
-                    ))
-                
-                conn.commit()
+                    supabase.table("transacoes").insert({
+                        "user_id": dest["id"],
+                        "valor": valor,
+                        "tipo_transacao": "Recebimento",
+                        "forma_pagamento": forma,
+                        "codigo": cod,
+                        "data_hora": agora.isoformat(),
+                        "localizacao": "On-line",
+                        "banco_origem": banco_rem,
+                        "banco_destino": dest["banco"],
+                        "suspeita": suspeita,
+                        "motivo_suspeita": motivo,
+                    }).execute()
+
                 registrar_fato("Pagamento", f"{forma} {fmt_moeda(valor)}")
-                
-                # Mostrar comprovante
+
                 st.success("Transação realizada com sucesso!")
                 st.markdown(f"""
                 **Comprovante de Transação**  
                 **Código:** `{cod}`  
                 **Tipo:** {forma}  
                 **Valor:** {fmt_moeda(valor)}  
-                **Data/Hora:** {datetime.now().strftime('%d/%m/%Y %H:%M')}  
+                **Data/Hora:** {agora.strftime('%d/%m/%Y %H:%M')}  
                 **Status:** Concluído
                 """)
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao registrar transação: {str(e)}")
-                conn.rollback()
                 st.stop()
 
 # ---------- TAB 2 (Compras Online) --------------------------------
 with tab_shop:
-    cur = conn.cursor(dictionary=True)
     st.markdown("### Nova compra")
     s_loja, s_cat = st.columns(2)
     with s_loja:
@@ -324,35 +347,47 @@ with tab_shop:
             st.warning("Descreva o produto."); st.stop()
         if total <= 0:
             st.warning("Valor inválido."); st.stop()
-            
+
         try:
-            cursor.execute("SELECT senha FROM usuarios WHERE id=%s",(user_id,))
-            if pwd_shop != cursor.fetchone()["senha"]:
+            senha_resp = (
+                supabase.table("usuarios")
+                .select("senha")
+                .eq("id", user_id)
+                .limit(1)
+                .execute()
+            )
+            if not senha_resp.data or pwd_shop != senha_resp.data[0]["senha"]:
                 st.error("Senha incorreta."); st.stop()
             if saldo < total:
                 st.error("Saldo insuficiente."); st.stop()
 
             codigo = uuid4().hex[:10]
-            cursor.execute("""
-            INSERT INTO transacoes
-              (user_id,valor,tipo_transacao,forma_pagamento,codigo,data_hora,
-               localizacao,banco_origem,banco_destino,suspeita)
-            VALUES
-              (%s,%s,'Compra','Online',%s,NOW(),'On-line',
-               'Conta Corrente',%s,0)
-            """, (user_id, total, codigo, loja))
-            cursor.execute("""
-            INSERT INTO compras_online
-              (user_id,codigo_tx,loja,categoria,produto,qtd,valor_unit,
-               valor_total,data_hora)
-            VALUES
-              (%s,%s,%s,%s,%s,%s,%s,%s,NOW())
-            """, (user_id, codigo, loja, categoria, prod,
-                  qtd, v_unit, total))
-            conn.commit()
+            agora = datetime.now()
+            supabase.table("transacoes").insert({
+                "user_id": user_id,
+                "valor": total,
+                "tipo_transacao": "Compra",
+                "forma_pagamento": "Online",
+                "codigo": codigo,
+                "data_hora": agora.isoformat(),
+                "localizacao": "On-line",
+                "banco_origem": "Conta Corrente",
+                "banco_destino": loja,
+                "suspeita": 0,
+            }).execute()
+            supabase.table("compras_online").insert({
+                "user_id": user_id,
+                "codigo_tx": codigo,
+                "loja": loja,
+                "categoria": categoria,
+                "produto": prod,
+                "qtd": qtd,
+                "valor_unit": v_unit,
+                "valor_total": total,
+                "data_hora": agora.isoformat(),
+            }).execute()
             registrar_fato("Compra online", f"{loja} {fmt_moeda(total)}")
-            
-            # Mostrar comprovante
+
             st.success("Compra realizada com sucesso!")
             st.markdown(f"""
             **Comprovante de Compra**  
@@ -362,56 +397,55 @@ with tab_shop:
             **Valor Unitário:** {fmt_moeda(v_unit)}  
             **Total:** {fmt_moeda(total)}  
             **Código:** `{codigo}`  
-            **Data/Hora:** {datetime.now().strftime('%d/%m/%Y %H:%M')}
+            **Data/Hora:** {agora.strftime('%d/%m/%Y %H:%M')}
             """)
             st.rerun()
         except Exception as e:
             st.error(f"Erro ao registrar compra: {str(e)}")
-            conn.rollback()
             st.stop()
 
 # ---------- TAB 3 (Extrato Detalhado) -----------------------------
 with tab_extrato:
-    cur = conn.cursor(dictionary=True)
     st.markdown("### Filtros do Extrato")
-    
+
     col1, col2, col3 = st.columns(3)
     with col1:
-        data_inicio = st.date_input("Data inicial", 
+        data_inicio = st.date_input("Data inicial",
                                   value=datetime.now().date() - timedelta(days=30))
     with col2:
-        data_fim = st.date_input("Data final", 
+        data_fim = st.date_input("Data final",
                                value=datetime.now().date())
     with col3:
-        tipo_transacao = st.multiselect("Tipo de transação", 
-                                      ["Todos", "Compra", "Pagamento", "Transferência", 
+        tipo_transacao = st.multiselect("Tipo de transação",
+                                      ["Todos", "Compra", "Pagamento", "Transferência",
                                        "Recebimento", "Cash-In", "Boleto"])
-    
+
     if st.button("Aplicar Filtros"):
         try:
-            query = """
-            SELECT tipo_transacao AS tipo, valor, data_hora, codigo,
-                   banco_origem, banco_destino, forma_pagamento,
-                   suspeita, motivo_suspeita
-            FROM transacoes
-            WHERE user_id = %s
-            AND DATE(data_hora) BETWEEN %s AND %s
-            """
-            params = [user_id, data_inicio, data_fim]
-            
-            if "Todos" not in tipo_transacao and tipo_transacao:
-                query += " AND tipo_transacao IN (%s)" % ",".join(["%s"]*len(tipo_transacao))
-                params.extend(tipo_transacao)
-            
-            query += " ORDER BY data_hora DESC"
-            
-            cursor.execute(query, tuple(params))
-            df_filtrado = pd.DataFrame(cursor.fetchall())
-            
+            resp = (
+                supabase.table("transacoes")
+                .select(
+                    "tipo_transacao, valor, data_hora, codigo, "
+                    "banco_origem, banco_destino, forma_pagamento, "
+                    "suspeita, motivo_suspeita"
+                )
+                .eq("user_id", user_id)
+                .gte("data_hora", data_inicio.isoformat())
+                .lte("data_hora", f"{data_fim.isoformat()}T23:59:59")
+                .order("data_hora", desc=True)
+                .execute()
+            )
+            df_filtrado = pd.DataFrame(resp.data or [])
+
+            if not df_filtrado.empty:
+                df_filtrado = df_filtrado.rename(columns={"tipo_transacao": "tipo"})
+                if "Todos" not in tipo_transacao and tipo_transacao:
+                    df_filtrado = df_filtrado[df_filtrado["tipo"].isin(tipo_transacao)]
+
             if not df_filtrado.empty:
                 df_filtrado["data_hora"] = pd.to_datetime(df_filtrado["data_hora"])
                 st.markdown(f"**Total de transações:** {len(df_filtrado)}")
-                
+
                 for _, r in df_filtrado.iterrows():
                     cor = "#2ecc71" if r.tipo in ("Recebimento","Cash-In") else \
                           "#e67e22" if r.tipo=="Transferência" else "#e74c3c"
@@ -427,59 +461,65 @@ with tab_extrato:
         except Exception as e:
             st.error(f"Erro ao filtrar transações: {str(e)}")
 
-# ---------- TAB 4 (Ofertas de Empréstimo) --------------------------
-# ----------- TAB 4 (Ofertas de Empréstimo) -------------------------------
-# ---------- TAB 4 (Ofertas de Empréstimo) ---------------------------
-# ---------- TAB 4 (Ofertas de Empréstimo) ---------------------------
-# ---------- TAB 4 (Ofertas de Empréstimo) ---------------------------
 # ---------- TAB 4 (Ofertas de Empréstimo) ---------------------------
 with tab_loan:
-    cur = conn.cursor(dictionary=True)
     import random
-    from datetime import datetime
     st.markdown("### 💳 Ofertas Personalizadas de Empréstimo")
 
     # 1. Verifica todas as ofertas do usuário
-    cursor.execute("""
-        SELECT * FROM emprestimos
-        WHERE user_id = %s
-        ORDER BY criado_em DESC
-    """, (user_id,))
-    todas_ofertas = cursor.fetchall()
-    
+    emp_resp = (
+        supabase.table("emprestimos")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("criado_em", desc=True)
+        .execute()
+    )
+    todas_ofertas = emp_resp.data or []
+
     # 2. Separa ofertas ativas (status 'oferta') e histórico
     oferta_ativa = next((o for o in todas_ofertas if o['status'] == 'oferta'), None)
     historico_ofertas = [o for o in todas_ofertas if o['status'] != 'oferta']
-    
+
     # 3. Se não tem oferta ativa, verifica se precisa gerar nova
     if not oferta_ativa:
         dias_ref = 30
-        cursor.execute("""
-            SELECT
-                SUM(CASE WHEN tipo_transacao IN ('Recebimento','Cash-In') THEN valor ELSE 0 END) AS entradas,
-                SUM(CASE WHEN tipo_transacao IN ('Compra','Pagamento','Transferência','Saque') THEN valor ELSE 0 END) AS saidas
-            FROM transacoes
-            WHERE user_id = %s AND DATE(data_hora) >= CURDATE() - INTERVAL %s DAY
-        """, (user_id, dias_ref))
-        res = cursor.fetchone() or {}
-        entradas = float(res.get("entradas") or 0)
-        saidas = float(res.get("saidas") or 0)
+        desde = (datetime.now().date() - timedelta(days=dias_ref)).isoformat()
+        tx_resp = (
+            supabase.table("transacoes")
+            .select("tipo_transacao, valor")
+            .eq("user_id", user_id)
+            .gte("data_hora", desde)
+            .execute()
+        )
+        entradas = 0.0
+        saidas = 0.0
+        for row in tx_resp.data or []:
+            tipo = row.get("tipo_transacao")
+            v = float(row.get("valor") or 0)
+            if tipo in ("Recebimento", "Cash-In"):
+                entradas += v
+            elif tipo in ("Compra", "Pagamento", "Transferência", "Saque"):
+                saidas += v
         precisa_limite = saidas > entradas * 1.2
 
         if precisa_limite:
-            # Gera nova oferta apenas se não houver ofertas recentes recusadas
             ultima_recusa = next((o for o in historico_ofertas if o['status'] == 'recusado'), None)
-            if not ultima_recusa or (datetime.now() - ultima_recusa['criado_em']).days > 7:
+            dias_desde_recusa = None
+            if ultima_recusa:
+                criado_dt = pd.to_datetime(ultima_recusa["criado_em"])
+                dias_desde_recusa = (pd.Timestamp.now() - criado_dt).days
+            if not ultima_recusa or (dias_desde_recusa is not None and dias_desde_recusa > 7):
                 valor_oferta = random.randint(1000, 20000) / 100 * 100
                 taxa = random.choice([1.69, 1.79, 1.89, 1.99])
                 prazo = random.choice([12, 24, 36])
-                cursor.execute("""
-                    INSERT INTO emprestimos (user_id, valor, taxa_juros, prazo_meses, status)
-                    VALUES (%s, %s, %s, %s, 'oferta')
-                """, (user_id, valor_oferta, taxa, prazo))
-                conn.commit()
-                cursor.execute("SELECT * FROM emprestimos WHERE id=LAST_INSERT_ID()")
-                oferta_ativa = cursor.fetchone()
+                ins = supabase.table("emprestimos").insert({
+                    "user_id": user_id,
+                    "valor": valor_oferta,
+                    "taxa_juros": taxa,
+                    "prazo_meses": prazo,
+                    "status": "oferta",
+                }).execute()
+                oferta_ativa = (ins.data or [None])[0]
 
     # 4. Exibição da oferta ativa (se houver)
     if oferta_ativa:
@@ -496,27 +536,34 @@ with tab_loan:
         with col_aceita:
             if st.button("✅ Aceitar Oferta", key="btn_emprestimo_ok"):
                 try:
-                    cursor.execute("UPDATE emprestimos SET status='aceito' WHERE id=%s", (oferta_ativa['id'],))
+                    supabase.table("emprestimos").update(
+                        {"status": "aceito"}
+                    ).eq("id", oferta_ativa["id"]).execute()
                     cod = uuid4().hex[:10]
-                    cursor.execute("""
-                        INSERT INTO transacoes
-                        (user_id, valor, tipo_transacao, forma_pagamento, codigo, data_hora,
-                         localizacao, banco_origem, banco_destino, suspeita, motivo_suspeita)
-                        VALUES (%s, %s, 'Cash-In', 'Crédito', %s, NOW(),
-                                'Sistema', 'Banco', 'Conta Corrente', 0, NULL)
-                    """, (user_id, oferta_ativa["valor"], cod))
-                    conn.commit()
+                    supabase.table("transacoes").insert({
+                        "user_id": user_id,
+                        "valor": oferta_ativa["valor"],
+                        "tipo_transacao": "Cash-In",
+                        "forma_pagamento": "Crédito",
+                        "codigo": cod,
+                        "data_hora": datetime.now().isoformat(),
+                        "localizacao": "Sistema",
+                        "banco_origem": "Banco",
+                        "banco_destino": "Conta Corrente",
+                        "suspeita": 0,
+                        "motivo_suspeita": None,
+                    }).execute()
                     registrar_fato("Empréstimo", f"Oferta aceita e crédito de {fmt_moeda(oferta_ativa['valor'])}")
                     st.success("Oferta aceita e valor creditado na conta!")
                     st.rerun()
                 except Exception as e:
-                    conn.rollback()
                     st.error(f"Erro ao processar empréstimo: {str(e)}")
 
         with col_recusa:
             if st.button("❌ Recusar Oferta", key="btn_emprestimo_no"):
-                cursor.execute("UPDATE emprestimos SET status='recusado' WHERE id=%s", (oferta_ativa['id'],))
-                conn.commit()
+                supabase.table("emprestimos").update(
+                    {"status": "recusado"}
+                ).eq("id", oferta_ativa["id"]).execute()
                 registrar_fato("Empréstimo", "Oferta recusada")
                 st.info("Oferta recusada. Você poderá receber novas propostas futuramente.")
                 st.rerun()
@@ -530,11 +577,12 @@ with tab_loan:
         st.markdown("### Histórico de Ofertas")
         for oferta in historico_ofertas:
             status_cor = "#2ecc71" if oferta['status'] == 'aceito' else "#e74c3c" if oferta['status'] == 'recusado' else "#f39c12"
+            criado_fmt = pd.to_datetime(oferta["criado_em"]).strftime("%d/%m/%Y %H:%M")
             st.markdown(f"""
             <div style='background:#0d1117;padding:10px 14px;border-radius:10px;margin-bottom:10px;'>
             <b>Oferta de {fmt_moeda(oferta['valor'])}</b> | 
             <span style='color:{status_cor}'>{oferta['status'].capitalize()}</span> | 
-            {oferta['criado_em'].strftime('%d/%m/%Y %H:%M')}<br>
+            {criado_fmt}<br>
             <small>Taxa: {oferta['taxa_juros']}% a.m | Prazo: {oferta['prazo_meses']} meses</small>
             </div>
             """, unsafe_allow_html=True)
@@ -568,24 +616,32 @@ st.markdown("## ⚙️ Configurações da Conta")
 tab_edit, tab_pwd = st.tabs(("✏️ Editar Dados", "🔑 Alterar Senha"))
 
 # ---------- EDITAR DADOS ------------------------------------------
-with tab_edit: 
-    cur = conn.cursor(dictionary=True)
+with tab_edit:
     try:
-        cursor.execute("""
-        SELECT nome,email,banco,cpf,rg,data_nascimento,endereco,
-               cidade,estado,telefone,renda,profissao,
-               estado_civil,situacao_prof
-          FROM usuarios
-         WHERE id=%s
-        """, (user_id,))
-        dados_atuais = cursor.fetchone()
+        dados_resp = (
+            supabase.table("usuarios")
+            .select(
+                "nome,email,banco,cpf,rg,data_nascimento,endereco,"
+                "cidade,estado,telefone,renda,profissao,"
+                "estado_civil,situacao_prof"
+            )
+            .eq("id", user_id)
+            .limit(1)
+            .execute()
+        )
+        dados_atuais = (dados_resp.data or [None])[0]
+        if not dados_atuais:
+            st.error("Usuário não encontrado.")
+            st.stop()
+
+        nasc_val = _as_date(dados_atuais["data_nascimento"])
 
         c1,c2 = st.columns(2, gap="large")
         with c1:
             nome_n  = st.text_input("Nome completo", value=dados_atuais["nome"])
             cpf_n   = st.text_input("CPF", value=dados_atuais["cpf"], disabled=True)
             rg_n    = st.text_input("RG",  value=dados_atuais["rg"],  disabled=True)
-            nasc_n  = st.date_input("Data nasc.", value=dados_atuais["data_nascimento"])
+            nasc_n  = st.date_input("Data nasc.", value=nasc_val)
             tel_n   = st.text_input("Telefone", value=dados_atuais["telefone"])
             renda_n = st.number_input("Renda (R$)", value=float(dados_atuais["renda"] or 0),
                                       step=100.0, format="%.2f")
@@ -610,118 +666,124 @@ with tab_edit:
         if st.button("Salvar alterações"):
             if not validar_cpf(cpf_n):
                 st.error("CPF inválido. Digite apenas os 11 números."); st.stop()
-                
+
             try:
-                # Primeiro atualiza os dados
-                cursor.execute("""
-                UPDATE usuarios SET
-                  nome=%s,email=%s,banco=%s,cpf=%s,rg=%s,data_nascimento=%s,
-                  endereco=%s,cidade=%s,estado=%s,telefone=%s,renda=%s,
-                  profissao=%s,estado_civil=%s,situacao_prof=%s
-                WHERE id=%s
-                """, (
-                    nome_n,email_n,banco_n,cpf_n,rg_n,nasc_n,
-                    end_n,cidade_n,uf_n,tel_n,renda_n,
-                    prof_n,est_civ,sit_prof,user_id))
-                
-                # Registra cada campo alterado
+                supabase.table("usuarios").update({
+                    "nome": nome_n,
+                    "email": email_n,
+                    "banco": banco_n,
+                    "cpf": cpf_n,
+                    "rg": rg_n,
+                    "data_nascimento": nasc_n.isoformat(),
+                    "endereco": end_n,
+                    "cidade": cidade_n,
+                    "estado": uf_n,
+                    "telefone": tel_n,
+                    "renda": renda_n,
+                    "profissao": prof_n,
+                    "estado_civil": est_civ,
+                    "situacao_prof": sit_prof,
+                }).eq("id", user_id).execute()
+
                 campos_alterados = []
-                
+
                 if nome_n != dados_atuais['nome']:
                     registrar_fato("editar_perfil", "Alteração de nome", "nome", dados_atuais['nome'], nome_n)
                     campos_alterados.append("nome")
-                
+
                 if email_n != dados_atuais['email']:
                     registrar_fato("editar_perfil", "Alteração de email", "email", dados_atuais['email'], email_n)
                     campos_alterados.append("email")
-                    
+
                 if banco_n != dados_atuais['banco']:
                     registrar_fato("editar_perfil", "Alteração de banco", "banco", dados_atuais['banco'], banco_n)
                     campos_alterados.append("banco")
-                    
+
                 if cpf_n != dados_atuais['cpf']:
                     registrar_fato("editar_perfil", "Alteração de CPF", "cpf", dados_atuais['cpf'], cpf_n)
                     campos_alterados.append("cpf")
-                    
+
                 if rg_n != dados_atuais['rg']:
                     registrar_fato("editar_perfil", "Alteração de RG", "rg", dados_atuais['rg'], rg_n)
                     campos_alterados.append("rg")
-                    
-                if nasc_n != dados_atuais['data_nascimento']:
-                    registrar_fato("editar_perfil", "Alteração de data de nascimento", "data_nascimento", 
+
+                if nasc_n != nasc_val:
+                    registrar_fato("editar_perfil", "Alteração de data de nascimento", "data_nascimento",
                                   str(dados_atuais['data_nascimento']), str(nasc_n))
                     campos_alterados.append("data_nascimento")
-                    
+
                 if end_n != dados_atuais['endereco']:
                     registrar_fato("editar_perfil", "Alteração de endereço", "endereco", dados_atuais['endereco'], end_n)
                     campos_alterados.append("endereco")
-                    
+
                 if cidade_n != dados_atuais['cidade']:
                     registrar_fato("editar_perfil", "Alteração de cidade", "cidade", dados_atuais['cidade'], cidade_n)
                     campos_alterados.append("cidade")
-                    
+
                 if uf_n != dados_atuais['estado']:
                     registrar_fato("editar_perfil", "Alteração de estado", "estado", dados_atuais['estado'], uf_n)
                     campos_alterados.append("estado")
-                    
+
                 if tel_n != dados_atuais['telefone']:
                     registrar_fato("editar_perfil", "Alteração de telefone", "telefone", dados_atuais['telefone'], tel_n)
                     campos_alterados.append("telefone")
-                    
+
                 if float(renda_n) != float(dados_atuais['renda'] or 0):
                     registrar_fato("editar_perfil", "Alteração de renda", "renda", str(dados_atuais['renda']), str(renda_n))
                     campos_alterados.append("renda")
-                    
+
                 if prof_n != dados_atuais['profissao']:
                     registrar_fato("editar_perfil", "Alteração de profissão", "profissao", dados_atuais['profissao'], prof_n)
                     campos_alterados.append("profissao")
-                    
+
                 if est_civ != dados_atuais['estado_civil']:
-                    registrar_fato("editar_perfil", "Alteração de estado civil", "estado_civil", 
+                    registrar_fato("editar_perfil", "Alteração de estado civil", "estado_civil",
                                   dados_atuais['estado_civil'], est_civ)
                     campos_alterados.append("estado_civil")
-                    
+
                 if sit_prof != dados_atuais['situacao_prof']:
-                    registrar_fato("editar_perfil", "Alteração de situação profissional", "situacao_prof", 
+                    registrar_fato("editar_perfil", "Alteração de situação profissional", "situacao_prof",
                                   dados_atuais['situacao_prof'], sit_prof)
                     campos_alterados.append("situacao_prof")
-                
-                conn.commit()
-                
+
                 if campos_alterados:
                     registrar_fato("Update perfil", f"Dados pessoais alterados: {', '.join(campos_alterados)}")
                 st.success("Dados atualizados com sucesso!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao atualizar dados: {str(e)}")
-                conn.rollback()
     except Exception as e:
         st.error(f"Erro ao carregar dados do usuário: {str(e)}")
 
 # ---------- ALTERAR SENHA -----------------------------------------
 with tab_pwd:
-    cur = conn.cursor(dictionary=True)
     pwd_old = st.text_input("Senha atual", type="password")
     pwd_new = st.text_input("Nova senha",  type="password")
     pwd_cnf = st.text_input("Confirmar nova senha", type="password")
 
     if st.button("Alterar senha"):
         try:
-            cursor.execute("SELECT senha FROM usuarios WHERE id=%s",(user_id,))
-            if pwd_old != cursor.fetchone()["senha"]:
+            senha_resp = (
+                supabase.table("usuarios")
+                .select("senha")
+                .eq("id", user_id)
+                .limit(1)
+                .execute()
+            )
+            senha_atual = (senha_resp.data or [{}])[0].get("senha")
+            if pwd_old != senha_atual:
                 st.error("Senha atual incorreta.")
             elif pwd_new != pwd_cnf:
                 st.warning("As senhas não coincidem.")
             elif len(pwd_new) < 6:
                 st.warning("Use ao menos 6 caracteres.")
             else:
-                cursor.execute("UPDATE usuarios SET senha=%s WHERE id=%s",
-                               (pwd_new,user_id))
-                conn.commit()
+                supabase.table("usuarios").update(
+                    {"senha": pwd_new}
+                ).eq("id", user_id).execute()
                 registrar_fato("Alterar senha","Senha atualizada")
                 st.success("Senha alterada com sucesso!")
                 st.session_state.logged_in = False  # Força novo login
                 st.rerun()
         except Exception as e:
             st.error(f"Erro ao alterar senha: {str(e)}")
-            conn.rollback()
