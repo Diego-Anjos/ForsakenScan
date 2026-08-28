@@ -127,15 +127,42 @@ if "logged_in" not in sess or not sess.logged_in or not sess.is_admin:  # type: 
     st.warning("⚠️ Apenas administradores podem visualizar o dashboard.")
     st.stop()
 
+st.title("Visão Geral - Monitoramento")
+
 # ════════════════════════════════════════
 # Dados principais (carga única)
 # ════════════════════════════════════════
-with st.spinner("Carregando dados …"):
-    df_tx_raw = fetch_all_df("transacoes")
-    df_usuarios = fetch_all_df("usuarios")
-    df_fatos = fetch_all_df("fatos_usuarios")
-    df_logs = fetch_all_df("logs")
-    df_compras = fetch_all_df("compras_online")
+df_tx_raw = pd.DataFrame()
+try:
+    with st.spinner("Carregando transações …"):
+        df_tx_raw = fetch_all_df("transacoes")
+except Exception:
+    df_tx_raw = pd.DataFrame()
+
+if df_tx_raw.empty:
+    st.info(
+        "Ainda não há transações registradas no sistema. "
+        "Utilize a tela 'Gerar Dados' para simular o fluxo."
+    )
+    st.stop()
+
+with st.spinner("Carregando dados auxiliares …"):
+    try:
+        df_usuarios = fetch_all_df("usuarios")
+    except Exception:
+        df_usuarios = pd.DataFrame()
+    try:
+        df_fatos = fetch_all_df("fatos_usuarios")
+    except Exception:
+        df_fatos = pd.DataFrame()
+    try:
+        df_logs = fetch_all_df("logs")
+    except Exception:
+        df_logs = pd.DataFrame()
+    try:
+        df_compras = fetch_all_df("compras_online")
+    except Exception:
+        df_compras = pd.DataFrame()
 
 df_tx_raw = _parse_dt(df_tx_raw, ["data_hora"])
 df_fatos = _parse_dt(df_fatos, ["data_hora"])
