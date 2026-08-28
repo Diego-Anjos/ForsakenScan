@@ -18,11 +18,13 @@ if str(_FRONTEND) not in sys.path:
     sys.path.insert(0, str(_FRONTEND))
 import bootstrap  # noqa: F401 — raiz no sys.path
 from backend.db import get_supabase_client, fetch_all_df
+from rbac import require_admin
 
 # ────────────────────────────────────────
 # Config
 # ────────────────────────────────────────
 st.set_page_config(page_title="Dashboard – Visão Geral", layout="wide")
+require_admin()
 supabase = get_supabase_client()
 
 
@@ -118,14 +120,6 @@ def _cashin_sem_historico_agg(df_tx: pd.DataFrame, min_valor: float = 5000) -> p
         .head(10)
     )
 
-
-# ────────────────────────────────────────
-# Autorização mínima – admin
-# ────────────────────────────────────────
-sess = st.session_state
-if "logged_in" not in sess or not sess.logged_in or not sess.is_admin:  # type: ignore[attr-defined]
-    st.warning("⚠️ Apenas administradores podem visualizar o dashboard.")
-    st.stop()
 
 st.title("Visão Geral - Monitoramento")
 

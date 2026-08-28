@@ -15,8 +15,10 @@ if str(_FRONTEND) not in sys.path:
     sys.path.insert(0, str(_FRONTEND))
 import bootstrap  # noqa: F401 — raiz no sys.path
 from backend.db import fetch_all_df
+from rbac import require_admin
 
 st.set_page_config(page_title="Mestre – Usuários", layout="wide")
+require_admin()
 
 _COLUNAS_EXIBICAO = [
     "nome",
@@ -43,11 +45,6 @@ def _formatar_exibicao(df: pd.DataFrame) -> pd.DataFrame:
         )
     return out[[c for c in _COLUNAS_EXIBICAO if c in out.columns]]
 
-
-# ── validação de acesso ──
-if not (st.session_state.get("logged_in") and st.session_state.get("is_admin")):
-    st.warning("Acesso restrito a administradores.")
-    st.stop()
 
 st.title("Painel Mestre – Usuários Cadastrados")
 

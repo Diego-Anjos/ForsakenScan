@@ -1,6 +1,17 @@
-import streamlit as st
-from pathlib import Path
+import sys
 from datetime import datetime
+from pathlib import Path
+
+import streamlit as st
+
+_FRONTEND = Path(__file__).resolve().parent.parent
+if str(_FRONTEND) not in sys.path:
+    sys.path.insert(0, str(_FRONTEND))
+
+from rbac import hide_admin_pages_from_sidebar
+
+if not st.session_state.get("is_admin"):
+    hide_admin_pages_from_sidebar()
 
 # ------------------------------------------------------------
 # 1) Calcula o caminho absoluto para a pasta raiz do projeto

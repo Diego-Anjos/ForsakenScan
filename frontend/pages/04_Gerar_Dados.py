@@ -15,8 +15,10 @@ if str(_FRONTEND) not in sys.path:
 import bootstrap  # noqa: F401 — raiz no sys.path
 
 from backend.db import get_supabase_client
+from rbac import require_admin
 
 st.set_page_config(page_title="Gerar Dados", layout="wide")
+require_admin()
 
 TIPOS_PAGAMENTO = ["PIX", "Cartão de Crédito", "Boleto", "TED"]
 LOCALIZACOES = [

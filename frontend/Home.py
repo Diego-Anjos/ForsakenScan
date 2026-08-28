@@ -2,8 +2,11 @@ import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
+_FRONTEND = Path(__file__).resolve().parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
+if str(_FRONTEND) not in sys.path:
+    sys.path.insert(0, str(_FRONTEND))
 
 from backend.db import get_supabase_client
 
@@ -11,6 +14,8 @@ import re
 from datetime import date
 
 import streamlit as st
+
+from rbac import hide_admin_pages_from_sidebar
 
 # ── Config ──────────────────────────────────────────────────────────
 st.set_page_config(page_title="ForsakenScan", layout="wide")
@@ -28,6 +33,9 @@ _SESSION = dict(
 )
 for _k, _v in _SESSION.items():
     st.session_state.setdefault(_k, _v)
+
+if not st.session_state.get("is_admin"):
+    hide_admin_pages_from_sidebar()
 
 # ── Helpers ─────────────────────────────────────────────────────────
 only_digits = lambda x: re.sub(r"\D", "", x or "")
@@ -248,7 +256,7 @@ with centro:
             st.text_input("Endereço", key="cad_endereco")
         with col_d:
             st.text_input("Cidade", key="cad_cidade")
-            st.text_input("UF", max_chars=2, key="cad_uf")
+            st.text_input("Estado (UF)", max_chars=2, key="cad_estado")
             st.text_input("Profissão", key="cad_profissao")
             st.selectbox("Estado civil", estados_civis, key="cad_estado_civil")
             st.selectbox("Situação profissional", situacoes, key="cad_situacao_prof")
@@ -269,7 +277,7 @@ with centro:
             banco = st.session_state.cad_banco
             endereco = st.session_state.cad_endereco or ""
             cidade = st.session_state.cad_cidade or ""
-            uf = st.session_state.cad_uf or ""
+            estado = st.session_state.cad_estado or ""
             profissao = st.session_state.cad_profissao or ""
             estado_civil = st.session_state.cad_estado_civil
             situacao_prof = st.session_state.cad_situacao_prof
@@ -334,7 +342,7 @@ with centro:
                                 ),
                                 "cidade": cidade,
                                 "renda": renda_val,
-                                "estado": (uf or "").upper(),
+                                "estado": (estado or "").upper(),
                                 "banco": banco,
                                 "profissao": profissao,
                                 "endereco": endereco,
