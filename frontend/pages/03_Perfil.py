@@ -105,37 +105,51 @@ email     = st.session_state.email
 # ------------------------------------------------------------------
 # Carrega transações do cliente
 # ------------------------------------------------------------------
+_TX_COLS = [
+    "tipo", "valor", "data_transacao", "codigo",
+    "banco_origem", "banco_destino", "forma_pagamento",
+    "suspeita", "motivo_suspeita",
+]
+_EMP_COLS = [
+    "id", "user_id", "valor", "taxa_juros", "prazo_meses", "status", "criado_em",
+]
+
+
+def _empty_tx_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=_TX_COLS)
+
+
+def _empty_emp_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=_EMP_COLS)
+
+
+df = _empty_tx_df()
+tot_tx = tot_out = tot_in = saldo = 0
+
 try:
     resp = (
         supabase.table("transacoes")
         .select(
-            "tipo_transacao, valor, data_hora, codigo, "
+            "tipo_pagamento, valor, data_transacao, codigo, "
             "banco_origem, banco_destino, forma_pagamento, "
             "suspeita, motivo_suspeita"
         )
         .eq("user_id", user_id)
-        .order("data_hora", desc=True)
+        .order("data_transacao", desc=True)
         .execute()
     )
     rows = resp.data or []
-    df = pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=[
-          "tipo","valor","data_hora","codigo",
-          "banco_origem","banco_destino","forma_pagamento",
-          "suspeita","motivo_suspeita"
-        ]
-    )
-    if not df.empty:
-        df = df.rename(columns={"tipo_transacao": "tipo"})
-        df["data_hora"] = pd.to_datetime(df["data_hora"])
-
-    tot_tx  = len(df)
-    tot_out = df[df["tipo"].isin(["Compra","Pagamento","Transferência"])]["valor"].sum() if not df.empty else 0
-    tot_in  = df[df["tipo"].isin(["Recebimento","Cash-In"])]["valor"].sum() if not df.empty else 0
-    saldo   = tot_in - tot_out
+    if rows:
+        df = pd.DataFrame(rows)
+        df = df.rename(columns={"tipo_pagamento": "tipo"})
+        df["data_transacao"] = pd.to_datetime(df["data_transacao"])
+        tot_tx = len(df)
+        tot_out = df[df["tipo"].isin(["Compra", "Pagamento", "Transferência"])]["valor"].sum()
+        tot_in = df[df["tipo"].isin(["Recebimento", "Cash-In"])]["valor"].sum()
+        saldo = tot_in - tot_out
 except Exception as e:
-    st.error(f"Erro ao carregar transações: {str(e)}")
-    st.stop()
+    st.error(f"Erro ao carregar transações: {e}")
+    df = _empty_tx_df()
 
 # ------------------------------------------------------------------
 # Layout
@@ -179,6 +193,8 @@ tab_transf, tab_shop, tab_extrato, tab_loan = st.tabs(
 
 # ---------- TAB 1 (Pagamentos/Boleto) -----------------------------
 with tab_transf:
+    if df.empty:
+        st.info("Nenhuma transação registrada ainda. Realize sua primeira operação abaixo.")
     st.markdown("### Realizar Pagamento/Transferência")
 
     c_forma,c_cpf,c_val,c_pwd,c_btn = st.columns([2,2,1,1,1])
@@ -201,13 +217,18 @@ with tab_transf:
             if cpf_dest.strip() and not validar_cpf(cpf_dest):
                 st.error("CPF inválido. Digite apenas os 11 números."); st.stop()
 
-            senha_resp = (
-                supabase.table("usuarios")
-                .select("senha")
-                .eq("id", user_id)
-                .limit(1)
-                .execute()
-            )
+            try:
+                senha_resp = (
+                    supabase.table("usuarios")
+                    .select("senha")
+                    .eq("id", user_id)
+                    .limit(1)
+                    .execute()
+                )
+            except Exception as e:
+                st.error(f"Erro ao validar senha: {e}")
+                st.stop()
+
             if not senha_resp.data or pwd != senha_resp.data[0]["senha"]:
                 st.error("Senha incorreta."); st.stop()
 
@@ -222,10 +243,10 @@ with tab_transf:
                     supabase.table("transacoes").insert({
                         "user_id": user_id,
                         "valor": valor,
-                        "tipo_transacao": "Cash-In",
+                        "tipo_pagamento": "Cash-In",
                         "forma_pagamento": "Boleto",
                         "codigo": codigo,
-                        "data_hora": agora.isoformat(),
+                        "data_transacao": agora.isoformat(),
                         "localizacao": "On-line",
                         "banco_origem": "Boleto",
                         "banco_destino": "Conta Corrente",
@@ -278,10 +299,10 @@ with tab_transf:
                 supabase.table("transacoes").insert({
                     "user_id": user_id,
                     "valor": valor,
-                    "tipo_transacao": "Transferência" if dest else "Pagamento",
+                    "tipo_pagamento": "Transferência" if dest else "Pagamento",
                     "forma_pagamento": forma,
                     "codigo": cod,
-                    "data_hora": agora.isoformat(),
+                    "data_transacao": agora.isoformat(),
                     "localizacao": "On-line",
                     "banco_origem": banco_rem,
                     "banco_destino": dest["banco"] if dest else "Estabelecimento",
@@ -293,10 +314,10 @@ with tab_transf:
                     supabase.table("transacoes").insert({
                         "user_id": dest["id"],
                         "valor": valor,
-                        "tipo_transacao": "Recebimento",
+                        "tipo_pagamento": "Recebimento",
                         "forma_pagamento": forma,
                         "codigo": cod,
-                        "data_hora": agora.isoformat(),
+                        "data_transacao": agora.isoformat(),
                         "localizacao": "On-line",
                         "banco_origem": banco_rem,
                         "banco_destino": dest["banco"],
@@ -322,6 +343,9 @@ with tab_transf:
 
 # ---------- TAB 2 (Compras Online) --------------------------------
 with tab_shop:
+    compras_vazias = df[df["tipo"] == "Compra"].empty if not df.empty else True
+    if compras_vazias:
+        st.info("Nenhuma compra online registrada ainda.")
     st.markdown("### Nova compra")
     s_loja, s_cat = st.columns(2)
     with s_loja:
@@ -366,10 +390,10 @@ with tab_shop:
             supabase.table("transacoes").insert({
                 "user_id": user_id,
                 "valor": total,
-                "tipo_transacao": "Compra",
+                "tipo_pagamento": "Compra",
                 "forma_pagamento": "Online",
                 "codigo": codigo,
-                "data_hora": agora.isoformat(),
+                "data_transacao": agora.isoformat(),
                 "localizacao": "On-line",
                 "banco_origem": "Conta Corrente",
                 "banco_destino": loja,
@@ -408,6 +432,9 @@ with tab_shop:
 with tab_extrato:
     st.markdown("### Filtros do Extrato")
 
+    if df.empty:
+        st.info("Nenhuma transação neste período.")
+
     col1, col2, col3 = st.columns(3)
     with col1:
         data_inicio = st.date_input("Data inicial",
@@ -416,34 +443,39 @@ with tab_extrato:
         data_fim = st.date_input("Data final",
                                value=datetime.now().date())
     with col3:
-        tipo_transacao = st.multiselect("Tipo de transação",
+        filtro_tipos = st.multiselect("Tipo de transação",
                                       ["Todos", "Compra", "Pagamento", "Transferência",
                                        "Recebimento", "Cash-In", "Boleto"])
 
     if st.button("Aplicar Filtros"):
+        df_filtrado = _empty_tx_df()
         try:
             resp = (
                 supabase.table("transacoes")
                 .select(
-                    "tipo_transacao, valor, data_hora, codigo, "
+                    "tipo_pagamento, valor, data_transacao, codigo, "
                     "banco_origem, banco_destino, forma_pagamento, "
                     "suspeita, motivo_suspeita"
                 )
                 .eq("user_id", user_id)
-                .gte("data_hora", data_inicio.isoformat())
-                .lte("data_hora", f"{data_fim.isoformat()}T23:59:59")
-                .order("data_hora", desc=True)
+                .gte("data_transacao", data_inicio.isoformat())
+                .lte("data_transacao", f"{data_fim.isoformat()}T23:59:59")
+                .order("data_transacao", desc=True)
                 .execute()
             )
-            df_filtrado = pd.DataFrame(resp.data or [])
+            rows = resp.data or []
+            if rows:
+                df_filtrado = pd.DataFrame(rows)
+                df_filtrado = df_filtrado.rename(columns={"tipo_pagamento": "tipo"})
+                if "Todos" not in filtro_tipos and filtro_tipos:
+                    df_filtrado = df_filtrado[
+                        df_filtrado["tipo"].isin(filtro_tipos)
+                    ]
 
-            if not df_filtrado.empty:
-                df_filtrado = df_filtrado.rename(columns={"tipo_transacao": "tipo"})
-                if "Todos" not in tipo_transacao and tipo_transacao:
-                    df_filtrado = df_filtrado[df_filtrado["tipo"].isin(tipo_transacao)]
-
-            if not df_filtrado.empty:
-                df_filtrado["data_hora"] = pd.to_datetime(df_filtrado["data_hora"])
+            if df_filtrado.empty:
+                st.info("Nenhuma transação neste período.")
+            else:
+                df_filtrado["data_transacao"] = pd.to_datetime(df_filtrado["data_transacao"])
                 st.markdown(f"**Total de transações:** {len(df_filtrado)}")
 
                 for _, r in df_filtrado.iterrows():
@@ -451,84 +483,122 @@ with tab_extrato:
                           "#e67e22" if r.tipo=="Transferência" else "#e74c3c"
                     st.markdown(f"""
                     <div style='background:#0d1117;padding:10px 14px;border-radius:10px;margin-bottom:10px;'>
-                    <b>{r.tipo}</b> | <span style='color:{cor}'>{fmt_moeda(r.valor)}</span> | {r.data_hora.strftime('%d/%m/%Y %H:%M')}<br>
+                    <b>{r.tipo}</b> | <span style='color:{cor}'>{fmt_moeda(r.valor)}</span> | {r.data_transacao.strftime('%d/%m/%Y %H:%M')}<br>
                     <small>Código: <code>{r.codigo or '—'}</code> | Forma: {r.forma_pagamento or '—'} |
                     {r.banco_origem or '—'} ▶ {r.banco_destino or '—'}</small>
                     </div>
                     """, unsafe_allow_html=True)
-            else:
-                st.info("Nenhuma transação encontrada com os filtros aplicados.")
         except Exception as e:
-            st.error(f"Erro ao filtrar transações: {str(e)}")
+            st.error(f"Erro ao filtrar transações: {e}")
 
 # ---------- TAB 4 (Ofertas de Empréstimo) ---------------------------
 with tab_loan:
     import random
     st.markdown("### 💳 Ofertas Personalizadas de Empréstimo")
 
-    # 1. Verifica todas as ofertas do usuário
-    emp_resp = (
-        supabase.table("emprestimos")
-        .select("*")
-        .eq("user_id", user_id)
-        .order("criado_em", desc=True)
-        .execute()
-    )
-    todas_ofertas = emp_resp.data or []
+    todas_ofertas: list[dict] = []
+    oferta_ativa = None
+    historico_ofertas: list[dict] = []
+    df_emprestimos = _empty_emp_df()
 
-    # 2. Separa ofertas ativas (status 'oferta') e histórico
-    oferta_ativa = next((o for o in todas_ofertas if o['status'] == 'oferta'), None)
-    historico_ofertas = [o for o in todas_ofertas if o['status'] != 'oferta']
+    try:
+        emp_resp = (
+            supabase.table("emprestimos")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("criado_em", desc=True)
+            .execute()
+        )
+        todas_ofertas = emp_resp.data or []
+        if todas_ofertas:
+            df_emprestimos = pd.DataFrame(todas_ofertas)
+        oferta_ativa = next(
+            (o for o in todas_ofertas if o.get("status") == "oferta"), None
+        )
+        historico_ofertas = [
+            o for o in todas_ofertas if o.get("status") != "oferta"
+        ]
+    except Exception as e:
+        st.error(f"Erro ao carregar empréstimos: {e}")
+        df_emprestimos = _empty_emp_df()
 
-    # 3. Se não tem oferta ativa, verifica se precisa gerar nova
+    if df_emprestimos.empty and not oferta_ativa:
+        st.info("Nenhum empréstimo solicitado.")
+
+    # Se não tem oferta ativa, verifica se precisa gerar nova
     if not oferta_ativa:
         dias_ref = 30
         desde = (datetime.now().date() - timedelta(days=dias_ref)).isoformat()
-        tx_resp = (
-            supabase.table("transacoes")
-            .select("tipo_transacao, valor")
-            .eq("user_id", user_id)
-            .gte("data_hora", desde)
-            .execute()
-        )
         entradas = 0.0
         saidas = 0.0
-        for row in tx_resp.data or []:
-            tipo = row.get("tipo_transacao")
-            v = float(row.get("valor") or 0)
-            if tipo in ("Recebimento", "Cash-In"):
-                entradas += v
-            elif tipo in ("Compra", "Pagamento", "Transferência", "Saque"):
-                saidas += v
+        try:
+            tx_resp = (
+                supabase.table("transacoes")
+                .select("tipo_pagamento, valor")
+                .eq("user_id", user_id)
+                .gte("data_transacao", desde)
+                .execute()
+            )
+            for row in tx_resp.data or []:
+                tipo = row.get("tipo_pagamento")
+                v = float(row.get("valor") or 0)
+                if tipo in ("Recebimento", "Cash-In"):
+                    entradas += v
+                elif tipo in ("Compra", "Pagamento", "Transferência", "Saque"):
+                    saidas += v
+        except Exception as e:
+            st.error(f"Erro ao analisar transações para oferta de crédito: {e}")
+
         precisa_limite = saidas > entradas * 1.2
 
         if precisa_limite:
-            ultima_recusa = next((o for o in historico_ofertas if o['status'] == 'recusado'), None)
+            ultima_recusa = next(
+                (o for o in historico_ofertas if o.get("status") == "recusado"), None
+            )
             dias_desde_recusa = None
-            if ultima_recusa:
+            if ultima_recusa and ultima_recusa.get("criado_em"):
                 criado_dt = pd.to_datetime(ultima_recusa["criado_em"])
                 dias_desde_recusa = (pd.Timestamp.now() - criado_dt).days
-            if not ultima_recusa or (dias_desde_recusa is not None and dias_desde_recusa > 7):
-                valor_oferta = random.randint(1000, 20000) / 100 * 100
-                taxa = random.choice([1.69, 1.79, 1.89, 1.99])
-                prazo = random.choice([12, 24, 36])
-                ins = supabase.table("emprestimos").insert({
-                    "user_id": user_id,
-                    "valor": valor_oferta,
-                    "taxa_juros": taxa,
-                    "prazo_meses": prazo,
-                    "status": "oferta",
-                }).execute()
-                oferta_ativa = (ins.data or [None])[0]
+            if not ultima_recusa or (
+                dias_desde_recusa is not None and dias_desde_recusa > 7
+            ):
+                try:
+                    valor_oferta = random.randint(1000, 20000) // 100 * 100
+                    taxa = random.choice([1.69, 1.79, 1.89, 1.99])
+                    prazo = random.choice([12, 24, 36])
+                    ins = (
+                        supabase.table("emprestimos")
+                        .insert({
+                            "user_id": user_id,
+                            "valor": valor_oferta,
+                            "taxa_juros": taxa,
+                            "prazo_meses": prazo,
+                            "status": "oferta",
+                        })
+                        .execute()
+                    )
+                    oferta_ativa = (ins.data or [None])[0]
+                except Exception as e:
+                    st.error(f"Erro ao gerar oferta de crédito: {e}")
 
-    # 4. Exibição da oferta ativa (se houver)
+    # Exibição da oferta ativa (se houver)
     if oferta_ativa:
-        parc = oferta_ativa["valor"] * oferta_ativa["taxa_juros"]/100 / (1 - (1 + oferta_ativa["taxa_juros"]/100)**(-oferta_ativa["prazo_meses"]))
+        try:
+            parc = (
+                oferta_ativa["valor"]
+                * oferta_ativa["taxa_juros"]
+                / 100
+                / (1 - (1 + oferta_ativa["taxa_juros"] / 100) ** (-oferta_ativa["prazo_meses"]))
+            )
+        except (KeyError, TypeError, ZeroDivisionError):
+            parc = 0.0
+            st.error("Dados da oferta de crédito estão incompletos.")
+
         st.success("🎯 Temos uma oferta especial para você!")
         st.markdown(f"""
-        **Valor:** {fmt_moeda(oferta_ativa['valor'])}  
-        **Taxa:** {oferta_ativa['taxa_juros']}% a.m  
-        **Prazo:** {oferta_ativa['prazo_meses']} meses  
+        **Valor:** {fmt_moeda(oferta_ativa.get('valor', 0))}  
+        **Taxa:** {oferta_ativa.get('taxa_juros', '—')}% a.m  
+        **Prazo:** {oferta_ativa.get('prazo_meses', '—')} meses  
         **Parcela estimada:** **{fmt_moeda(parc)}**
         """)
 
@@ -543,47 +613,65 @@ with tab_loan:
                     supabase.table("transacoes").insert({
                         "user_id": user_id,
                         "valor": oferta_ativa["valor"],
-                        "tipo_transacao": "Cash-In",
+                        "tipo_pagamento": "Cash-In",
                         "forma_pagamento": "Crédito",
                         "codigo": cod,
-                        "data_hora": datetime.now().isoformat(),
+                        "data_transacao": datetime.now().isoformat(),
                         "localizacao": "Sistema",
                         "banco_origem": "Banco",
                         "banco_destino": "Conta Corrente",
                         "suspeita": 0,
                         "motivo_suspeita": None,
                     }).execute()
-                    registrar_fato("Empréstimo", f"Oferta aceita e crédito de {fmt_moeda(oferta_ativa['valor'])}")
+                    registrar_fato(
+                        "Empréstimo",
+                        f"Oferta aceita e crédito de {fmt_moeda(oferta_ativa['valor'])}",
+                    )
                     st.success("Oferta aceita e valor creditado na conta!")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Erro ao processar empréstimo: {str(e)}")
+                    st.error(f"Erro ao processar empréstimo: {e}")
 
         with col_recusa:
             if st.button("❌ Recusar Oferta", key="btn_emprestimo_no"):
-                supabase.table("emprestimos").update(
-                    {"status": "recusado"}
-                ).eq("id", oferta_ativa["id"]).execute()
-                registrar_fato("Empréstimo", "Oferta recusada")
-                st.info("Oferta recusada. Você poderá receber novas propostas futuramente.")
-                st.rerun()
-    else:
+                try:
+                    supabase.table("emprestimos").update(
+                        {"status": "recusado"}
+                    ).eq("id", oferta_ativa["id"]).execute()
+                    registrar_fato("Empréstimo", "Oferta recusada")
+                    st.info(
+                        "Oferta recusada. Você poderá receber novas propostas futuramente."
+                    )
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao recusar oferta: {e}")
+    elif not df_emprestimos.empty:
         st.warning("🚫 Nenhuma oferta disponível no momento.")
-        st.info("Continue movimentando sua conta para aumentar seu limite e receber novas propostas de crédito futuramente!")
+        st.info(
+            "Continue movimentando sua conta para aumentar seu limite e "
+            "receber novas propostas de crédito futuramente!"
+        )
 
-    # 5. Mostrar histórico de ofertas (se houver)
     if historico_ofertas:
         st.markdown("---")
         st.markdown("### Histórico de Ofertas")
         for oferta in historico_ofertas:
-            status_cor = "#2ecc71" if oferta['status'] == 'aceito' else "#e74c3c" if oferta['status'] == 'recusado' else "#f39c12"
-            criado_fmt = pd.to_datetime(oferta["criado_em"]).strftime("%d/%m/%Y %H:%M")
+            status_cor = (
+                "#2ecc71"
+                if oferta.get("status") == "aceito"
+                else "#e74c3c"
+                if oferta.get("status") == "recusado"
+                else "#f39c12"
+            )
+            criado_fmt = "—"
+            if oferta.get("criado_em"):
+                criado_fmt = pd.to_datetime(oferta["criado_em"]).strftime("%d/%m/%Y %H:%M")
             st.markdown(f"""
             <div style='background:#0d1117;padding:10px 14px;border-radius:10px;margin-bottom:10px;'>
-            <b>Oferta de {fmt_moeda(oferta['valor'])}</b> | 
-            <span style='color:{status_cor}'>{oferta['status'].capitalize()}</span> | 
+            <b>Oferta de {fmt_moeda(oferta.get('valor', 0))}</b> | 
+            <span style='color:{status_cor}'>{str(oferta.get('status', '—')).capitalize()}</span> | 
             {criado_fmt}<br>
-            <small>Taxa: {oferta['taxa_juros']}% a.m | Prazo: {oferta['prazo_meses']} meses</small>
+            <small>Taxa: {oferta.get('taxa_juros', '—')}% a.m | Prazo: {oferta.get('prazo_meses', '—')} meses</small>
             </div>
             """, unsafe_allow_html=True)
 
@@ -596,14 +684,14 @@ st.markdown("<hr style='margin-top:28px;border:1px solid #ffffff22'>",
 st.markdown("## 🗒️ Últimas Transações")
 
 if df.empty:
-    st.info("Nenhuma transação.")
+    st.info("Nenhuma transação encontrada para este usuário.")
 else:
     for _, r in df.head(15).iterrows():
         cor = "#2ecc71" if r.tipo in ("Recebimento","Cash-In") else \
               "#e67e22" if r.tipo=="Transferência" else "#e74c3c"
         st.markdown(f"""
 <div style='background:#0d1117;padding:10px 14px;border-radius:10px;margin-bottom:10px;'>
-<b>{r.tipo}</b> | <span style='color:{cor}'>{fmt_moeda(r.valor)}</span> | {r.data_hora.strftime('%d/%m/%Y %H:%M')}<br>
+<b>{r.tipo}</b> | <span style='color:{cor}'>{fmt_moeda(r.valor)}</span> | {r.data_transacao.strftime('%d/%m/%Y %H:%M')}<br>
 <small>Código: <code>{r.codigo or '—'}</code> | Forma: {r.forma_pagamento or '—'} |
 {r.banco_origem or '—'} ▶ {r.banco_destino or '—'}</small>
 </div>

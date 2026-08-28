@@ -64,6 +64,19 @@ def _logout() -> None:
     st.session_state.update(_SESSION)
 
 
+def _rollback_auth_user(user_id: str) -> bool:
+    """Remove usuário do Auth se o insert em `usuarios` falhar (requer service role)."""
+    try:
+        supabase.auth.admin.delete_user(user_id)
+        return True
+    except Exception:
+        try:
+            supabase.auth.sign_out()
+        except Exception:
+            pass
+        return False
+
+
 def _sessao_cliente(perfil: dict) -> None:
     st.session_state.update(
         logged_in=True,
@@ -287,6 +300,7 @@ with centro:
                 elif data_nasc and not nasc_val:
                     st.error("Data de nascimento inválida. Use DD/MM/AAAA.")
                 else:
+                    user_id = None
                     try:
                         dup = (
                             supabase.table("usuarios")
@@ -298,39 +312,63 @@ with centro:
                         if dup.data:
                             st.error("E-mail já cadastrado.")
                         else:
-                            auth = supabase.auth.sign_up(
+                            response = supabase.auth.sign_up(
                                 {"email": email_cad, "password": senha_cad}
                             )
-                            if not auth.user:
-                                st.error("Não foi possível criar a conta no Auth.")
-                            else:
-                                payload = {
-                                    "nome": nome,
-                                    "username": usuario_val,
-                                    "cpf": cpf_limpo,
-                                    "email": email_cad,
-                                    "rg": rg_limpo,
-                                    "telefone": tel_limpo,
-                                    "data_nascimento": nasc_val.isoformat() if nasc_val else None,
-                                    "cidade": cidade,
-                                    "renda": renda_val,
-                                    "estado": (uf or "").upper(),
-                                    "banco": banco,
-                                    "profissao": profissao,
-                                    "endereco": endereco,
-                                    "estado_civil": estado_civil,
-                                    "situacao_prof": situacao_prof,
-                                }
-                                supabase.table("usuarios").insert(payload).execute()
-                                try:
-                                    supabase.auth.sign_out()
-                                except Exception:
-                                    pass
-                                st.success("Conta criada! Faça login na aba **Acesso Cliente**.")
+                            if not response.user:
+                                raise RuntimeError(
+                                    "Não foi possível criar a conta no Auth."
+                                )
+
+                            user_id = response.user.id
+                            payload = {
+                                "id": user_id,
+                                "nome": nome,
+                                "username": usuario_val,
+                                "cpf": cpf_limpo,
+                                "email": email_cad,
+                                "rg": rg_limpo,
+                                "telefone": tel_limpo,
+                                "data_nascimento": (
+                                    nasc_val.isoformat() if nasc_val else None
+                                ),
+                                "cidade": cidade,
+                                "renda": renda_val,
+                                "estado": (uf or "").upper(),
+                                "banco": banco,
+                                "profissao": profissao,
+                                "endereco": endereco,
+                                "estado_civil": estado_civil,
+                                "situacao_prof": situacao_prof,
+                            }
+                            supabase.table("usuarios").insert(payload).execute()
+
+                            try:
+                                supabase.auth.sign_out()
+                            except Exception:
+                                pass
+                            st.success(
+                                "Conta criada! Faça login na aba **Acesso Cliente**."
+                            )
                     except Exception as exc:
+                        rollback_ok = False
+                        if user_id:
+                            rollback_ok = _rollback_auth_user(user_id)
+                            if not rollback_ok:
+                                st.warning(
+                                    "O perfil não foi salvo e não foi possível remover "
+                                    "o usuário do Auth automaticamente. "
+                                    "Verifique se `SUPABASE_SERVICE_ROLE_KEY` está no `.env`."
+                                )
                         msg = str(exc)
                         if "already" in msg.lower():
                             st.error("E-mail já cadastrado no Auth.")
+                        elif user_id and rollback_ok:
+                            st.error(
+                                f"Erro ao salvar o perfil. Cadastro revertido no Auth: {msg}"
+                            )
+                        elif user_id:
+                            st.error(f"Erro ao salvar o perfil: {msg}")
                         else:
                             st.error(f"Erro no cadastro: {msg}")
 
