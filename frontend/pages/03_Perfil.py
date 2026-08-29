@@ -67,6 +67,26 @@ def validar_cpf(cpf: str) -> bool:
 def only_digits(x: str) -> str:
     return re.sub(r"\D", "", x or "")
 
+
+def parse_money(valor: str | float | int | None) -> float:
+    """Converte string mascarada (R$ 1.234,56) ou número em float."""
+    if valor is None or valor == "":
+        return 0.0
+    if isinstance(valor, (int, float)):
+        return float(valor)
+    s = str(valor).strip()
+    if not s:
+        return 0.0
+    try:
+        return float(
+            s.replace("R$", "")
+            .replace(".", "")
+            .replace(",", ".")
+            .strip()
+        )
+    except ValueError:
+        return 0.0
+
 def _as_date(val):
     """Normaliza data vinda da API (str/date/datetime) para date."""
     if val is None:
@@ -234,15 +254,18 @@ with tab_transf:
         forma = st.selectbox("Forma", FORMAS_PG, key="pg_forma")
     with c_cpf:
         cpf_dest = st.text_input("CPF destinatário (opcional)", key="pg_cpf",
-                                help="Somente números, sem pontos ou traços")
+                                placeholder="000.000.000-00",
+                                help="Digite o CPF; a máscara é aplicada automaticamente")
     with c_val:
-        valor = st.number_input("Valor (R$)", min_value=0.01, step=10.0,
-                                format="%.2f", key="pg_val")
+        valor_str = st.text_input("Valor (R$)", key="pg_val", placeholder="R$ 0,00")
     with c_pwd:
         pwd = st.text_input("Senha", type="password", key="pg_pwd")
     with c_btn:
+        st.write("")  # Espaçador para o label dos inputs
+        st.write("")  # Ajuste fino de alinhamento vertical
         if st.button("Enviar/Emitir", key="btn_pg",
                     help="Confirme os dados antes de enviar"):
+            valor = parse_money(valor_str)
             if valor <= 0:
                 st.warning("Informe valor > 0."); st.stop()
 
@@ -284,6 +307,7 @@ with tab_transf:
                         )
                     ).execute()
 
+                    st.toast("Transação realizada com sucesso!", icon="💸")
                     st.success("Boleto gerado com sucesso!")
                     st.markdown(f"""
                     **Comprovante de Boleto**  
@@ -361,6 +385,7 @@ with tab_transf:
                         )
                     ).execute()
 
+                st.toast("Transação realizada com sucesso!", icon="💸")
                 st.success("Transação realizada com sucesso!")
                 st.markdown(f"""
                 **Comprovante de Transação**  
@@ -393,9 +418,11 @@ with tab_shop:
     with q_col:
         qtd = st.number_input("Qtd", min_value=1, step=1, key="qtd")
     with q_val:
-        v_unit = st.number_input("Valor unitário (R$)", min_value=0.01,
-                                 step=10.0, format="%.2f", key="vunit")
+        v_unit_str = st.text_input(
+            "Valor unitário (R$)", key="vunit", placeholder="R$ 0,00"
+        )
 
+    v_unit = parse_money(v_unit_str)
     total = qtd * v_unit
     st.markdown(f"**Total:** {fmt_moeda(total)}")
 
@@ -438,6 +465,7 @@ with tab_shop:
                 )
             ).execute()
 
+            st.toast("Compra aprovada com sucesso!", icon="🛍️")
             st.success("Compra realizada com sucesso!")
             st.markdown(f"""
             **Comprovante de Compra**  
@@ -605,6 +633,8 @@ with tab_loan:
                         .execute()
                     )
                     oferta_ativa = (ins.data or [None])[0]
+                    if oferta_ativa:
+                        st.toast("Empréstimo solicitado!", icon="💳")
                 except Exception as e:
                     st.error(f"Erro ao gerar oferta de crédito: {e}")
 
@@ -660,6 +690,7 @@ with tab_loan:
                             motivo_suspeita=motivo_suspeita,
                         )
                     ).execute()
+                    st.toast("Oferta aceita!", icon="✅")
                     st.success("Oferta aceita e valor creditado na conta!")
                     st.rerun()
                 except Exception as e:
@@ -671,6 +702,7 @@ with tab_loan:
                     supabase.table("emprestimos").update(
                         {"status": "recusado"}
                     ).eq("id", oferta_ativa["id"]).execute()
+                    st.toast("Oferta recusada!", icon="🚫")
                     st.info(
                         "Oferta recusada. Você poderá receber novas propostas futuramente."
                     )
@@ -762,9 +794,16 @@ with tab_edit:
             cpf_n   = st.text_input("CPF", value=dados_atuais["cpf"], disabled=True)
             rg_n    = st.text_input("RG",  value=dados_atuais["rg"],  disabled=True)
             nasc_n  = st.date_input("Data nasc.", value=nasc_val)
-            tel_n   = st.text_input("Telefone", value=dados_atuais["telefone"])
-            renda_n = st.number_input("Renda (R$)", value=float(dados_atuais["renda"] or 0),
-                                      step=100.0, format="%.2f")
+            tel_n   = st.text_input(
+                "Telefone",
+                value=dados_atuais["telefone"] or "",
+                placeholder="(00) 00000-0000",
+            )
+            renda_n = st.text_input(
+                "Renda mensal",
+                value=fmt_moeda(float(dados_atuais["renda"] or 0)),
+                placeholder="R$ 0,00",
+            )
             est_civ = st.selectbox("Estado civil", EST_CIVIL_OPTS,
                                    index=EST_CIVIL_OPTS.index(dados_atuais["estado_civil"]))
         with c2:
@@ -792,19 +831,20 @@ with tab_edit:
                     "nome": nome_n,
                     "email": email_n,
                     "banco": banco_n,
-                    "cpf": cpf_n,
-                    "rg": rg_n,
+                    "cpf": only_digits(cpf_n),
+                    "rg": only_digits(rg_n),
                     "data_nascimento": nasc_n.isoformat(),
                     "endereco": end_n,
                     "cidade": cidade_n,
                     "estado": estado_n,
-                    "telefone": tel_n,
-                    "renda": renda_n,
+                    "telefone": only_digits(tel_n),
+                    "renda": parse_money(renda_n),
                     "profissao": prof_n,
                     "estado_civil": est_civ,
                     "situacao_prof": sit_prof,
                 }).eq("id", user_id).execute()
 
+                st.toast("Dados atualizados com sucesso!", icon="✅")
                 st.success("Dados atualizados com sucesso!")
                 st.rerun()
             except Exception as e:
@@ -828,8 +868,85 @@ with tab_pwd:
                 st.warning("Use ao menos 6 caracteres.")
             else:
                 supabase.auth.update_user({"password": pwd_new})
+                st.toast("Senha alterada com sucesso!", icon="🔒")
                 st.success("Senha alterada com sucesso!")
                 st.session_state.logged_in = False
                 st.rerun()
         except Exception as e:
             st.error(f"Erro ao alterar senha: {str(e)}")
+
+# ------------------------------------------------------------------
+# Máscaras em tempo real (Vanilla JS + MutationObserver)
+# ------------------------------------------------------------------
+st.html(
+    """
+<script>
+const doc = window.parent.document;
+const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+
+function updateReactInput(element, value) {
+    nativeInputValueSetter.call(element, value);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function applyMaskToElement(input, type) {
+    if (input.dataset.masked) return;
+    input.dataset.masked = 'true';
+
+    input.addEventListener('input', function(e) {
+        let v = e.target.value.replace(/\\D/g, '');
+        let formatted = v;
+
+        if (type === 'cpf') {
+            v = v.substring(0, 11);
+            formatted = v.replace(/(\\d{3})(\\d)/, '$1.$2').replace(/(\\d{3})(\\d)/, '$1.$2').replace(/(\\d{3})(\\d{1,2})$/, '$1-$2');
+        } else if (type === 'money') {
+            v = v.replace(/^0+/, '');
+            if (v === '') v = '0';
+            let num = parseInt(v) / 100;
+            formatted = num.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        } else if (type === 'phone') {
+             v = v.substring(0, 11);
+             formatted = v.replace(/(\\d{2})(\\d)/, '($1) $2').replace(/(\\d{5})(\\d{1,4})$/, '$1-$2');
+        }
+
+        if (e.target.value !== formatted) {
+            updateReactInput(e.target, formatted);
+        }
+    });
+}
+
+function initMasks() {
+    const maskConfig = [
+        { selector: 'input[aria-label="CPF destinatário (opcional)"]', type: 'cpf' },
+        { selector: 'input[aria-label="Valor (R$)"]', type: 'money' },
+        { selector: 'input[aria-label="Valor unitário (R$)"]', type: 'money' },
+        { selector: 'input[aria-label="Valor solicitado (R$)"]', type: 'money' },
+        { selector: 'input[aria-label="CPF"]', type: 'cpf' },
+        { selector: 'input[aria-label="Telefone"]', type: 'phone' },
+        { selector: 'input[aria-label="Renda mensal"]', type: 'money' }
+    ];
+
+    maskConfig.forEach(config => {
+        doc.querySelectorAll(config.selector).forEach(el => applyMaskToElement(el, config.type));
+        // Fallback: widgets stTextInput pelo rótulo visível
+        const labelText = config.selector.replace(/^input\\[aria-label="/, '').replace(/"\\]$/, '');
+        doc.querySelectorAll('[data-testid="stTextInput"]').forEach(wrap => {
+            const labelEl = wrap.querySelector('label, p, span');
+            if (!labelEl) return;
+            if ((labelEl.textContent || '').trim() !== labelText) return;
+            const input = wrap.querySelector('input');
+            if (input) applyMaskToElement(input, config.type);
+        });
+    });
+}
+
+const observer = new MutationObserver((mutations) => {
+    initMasks();
+});
+observer.observe(doc.body, { childList: true, subtree: true });
+initMasks();
+</script>
+    """,
+    unsafe_allow_javascript=True,
+)

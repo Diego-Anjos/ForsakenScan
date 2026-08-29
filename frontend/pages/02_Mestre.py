@@ -28,7 +28,7 @@ _COLUNAS_EXIBICAO = [
     "data_nascimento",
     "telefone",
     "cidade",
-    "uf",
+    "estado",
     "renda",
     "criado_em",
 ]

@@ -145,6 +145,7 @@ if not st.session_state.logged_in:
     )
 
 if st.session_state.logged_in and st.sidebar.button("Sair"):
+    st.toast("Logout efetuado com sucesso!", icon="👋")
     _logout()
     st.rerun()
 
@@ -172,6 +173,7 @@ with centro:
         if c1.button("Ir para o painel", width="stretch"):
             st.switch_page(destino)
         if c2.button("Sair da conta", width="stretch"):
+            st.toast("Logout efetuado com sucesso!", icon="👋")
             _logout()
             st.rerun()
         st.stop()
@@ -211,6 +213,7 @@ with centro:
                             st.error("Conta bloqueada. Entre em contato com o suporte.")
                         else:
                             _sessao_cliente(perfil)
+                            st.toast("Login realizado com sucesso!", icon="👋")
                             st.switch_page("pages/03_Perfil.py")
                 except Exception as exc:
                     msg = str(exc)
@@ -355,6 +358,7 @@ with centro:
                                 supabase.auth.sign_out()
                             except Exception:
                                 pass
+                            st.toast("Conta criada com sucesso!", icon="🎉")
                             st.success(
                                 "Conta criada! Faça login na aba **Acesso Cliente**."
                             )
@@ -474,6 +478,7 @@ with centro:
                             )
                         else:
                             _sessao_admin(admin_data.data[0])
+                            st.toast("Login realizado com sucesso!", icon="👋")
                             st.switch_page("pages/01_Dashboard.py")
                 except Exception as exc:
                     msg = str(exc)
