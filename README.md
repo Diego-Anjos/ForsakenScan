@@ -70,7 +70,16 @@ O sistema está **online** e disponível em:
 
 ### [`https://forsakenscan.onrender.com`](https://forsakenscan.onrender.com)
 
-> Use a aplicação em produção para explorar o Home Banking e, com credenciais de administrador, o Back-Office completo.
+### Credenciais de Acesso (Teste)
+
+Para visitantes e avaliadores da feira testarem a visão de auditoria do Back-Office:
+
+| Campo | Valor |
+|-------|--------|
+| **E-mail** | `admin@forsakenscan.com` |
+| **Senha** | `admin@for88552` |
+
+> Com essas credenciais, o usuário tem acesso exclusivo ao **Dashboard** de métricas, ao **Painel Mestre** e à **geração de dados sintéticos**.
 
 ---
 
