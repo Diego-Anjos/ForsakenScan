@@ -1,6 +1,10 @@
 import os
+from typing import Any
 
 import certifi
+import pandas as pd
+from dotenv import load_dotenv
+from supabase import Client, create_client
 
 # Certificados SSL antes de qualquer módulo de rede (Windows / httpx)
 _cert = certifi.where()
@@ -8,55 +12,37 @@ os.environ["SSL_CERT_FILE"] = _cert
 os.environ["REQUESTS_CA_BUNDLE"] = _cert
 os.environ["CURL_CA_BUNDLE"] = _cert
 
-import ssl
-from typing import Any
-
-ssl._create_default_https_context = ssl._create_unverified_context
-
-import httpx
-import warnings
-
-# Suprime os avisos de segurança sobre SSL desativado no terminal
-warnings.filterwarnings("ignore", message="Unverified HTTPS request")
-
-# Monkey-patch para forçar o httpx (usado pelo Supabase) a ignorar a verificação de SSL local
-original_init = httpx.Client.__init__
-original_async_init = httpx.AsyncClient.__init__
-
-def patched_init(self, *args, **kwargs):
-    kwargs['verify'] = False
-    original_init(self, *args, **kwargs)
-    
-def patched_async_init(self, *args, **kwargs):
-    kwargs['verify'] = False
-    original_async_init(self, *args, **kwargs)
-
-httpx.Client.__init__ = patched_init
-httpx.AsyncClient.__init__ = patched_async_init
-
-import pandas as pd
-from dotenv import load_dotenv
-from supabase import Client, create_client
-
 load_dotenv()
 
 _client: Client | None = None
+_admin_client: Client | None = None
 
 
-def get_supabase_client() -> Client:
-    """Retorna o cliente Supabase (singleton)."""
-    global _client
+def get_supabase_client(*, admin: bool = False) -> Client:
+    """Retorna o cliente Supabase (singleton).
+
+    Usa SUPABASE_ANON_KEY por padrão. Passe admin=True para SUPABASE_SERVICE_ROLE_KEY.
+    """
+    global _client, _admin_client
+
+    url = os.getenv("SUPABASE_URL")
+    if not url:
+        raise RuntimeError("Defina SUPABASE_URL no .env")
+
+    if admin:
+        if _admin_client is None:
+            key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+            if not key:
+                raise RuntimeError(
+                    "Defina SUPABASE_SERVICE_ROLE_KEY no .env para operações admin"
+                )
+            _admin_client = create_client(url, key)
+        return _admin_client
+
     if _client is None:
-        url = os.getenv("SUPABASE_URL")
-        key = (
-            os.getenv("SUPABASE_ANON_KEY")
-            or os.getenv("SUPABASE_KEY")
-            or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        )
-        if not url or not key:
-            raise RuntimeError(
-                "Defina SUPABASE_URL e SUPABASE_ANON_KEY (ou SUPABASE_KEY) no .env"
-            )
+        key = os.getenv("SUPABASE_ANON_KEY")
+        if not key:
+            raise RuntimeError("Defina SUPABASE_ANON_KEY no .env")
         _client = create_client(url, key)
     return _client
 

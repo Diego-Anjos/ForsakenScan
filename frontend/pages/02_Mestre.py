@@ -15,9 +15,10 @@ if str(_FRONTEND) not in sys.path:
     sys.path.insert(0, str(_FRONTEND))
 import bootstrap  # noqa: F401 — raiz no sys.path
 from backend.db import fetch_all_df
-from rbac import require_admin
+from rbac import aplicar_regras_sidebar, require_admin
 
 st.set_page_config(page_title="Mestre – Usuários", layout="wide")
+aplicar_regras_sidebar()
 require_admin()
 
 _COLUNAS_EXIBICAO = [

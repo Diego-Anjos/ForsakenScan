@@ -10,8 +10,7 @@ if str(_FRONTEND) not in sys.path:
 
 from rbac import hide_admin_pages_from_sidebar
 
-if not st.session_state.get("is_admin"):
-    hide_admin_pages_from_sidebar()
+hide_admin_pages_from_sidebar()
 
 # ------------------------------------------------------------
 # 1) Calcula o caminho absoluto para a pasta raiz do projeto
@@ -40,70 +39,101 @@ else:
 st.markdown("<h1 style='text-align:center;'>FORSAKENSCAN</h1>", unsafe_allow_html=True)
 
 # ------------------------------------------------------------
-# 5) Descrição principal
+# 5) Visão Geral
 # ------------------------------------------------------------
+st.markdown("## Visão Geral")
 st.markdown(
     """
-    **Detecção Implacável de Fraudes e Atividades Suspeitas**  
-    Plataforma end-to-end para bancos e fintechs monitorarem,  
-    em tempo real, toda a jornada do cliente:  
-    - **Cadastro** de usuários  
-    - **Transações** financeiras  
-    - **Módulo de regras** para flag de comportamentos de risco  
-    - **Dashboard administrativo** com KPIs, gráficos interativos e alertas  
+    **Detecção implacável de fraudes e atividades suspeitas**  
+    O **ForsakenScan** é um ecossistema dual pensado para simular, de ponta a ponta,
+    a operação de um banco digital moderno:
+
+    - **Home Banking (cliente)** — cadastro, autenticação, perfil e jornada transacional
+      completa: Pix, pagamentos, compras online e histórico financeiro em tempo real.
+    - **Back-Office (auditor)** — painel administrativo robusto para equipes de risco
+      monitorarem KPIs, investigarem alertas e caçar padrões fraudulentos ao vivo.
+
+    Do cadastro à flag de suspeita, cada transação percorre o pipeline de detecção
+    e aparece instantaneamente nos dashboards interativos da equipe de auditoria.
     """
 )
 
 # ------------------------------------------------------------
 # 6) Evento UNIFECAF
 # ------------------------------------------------------------
-st.markdown("## Feira de Tecnologia — 24 de Maio de 2025")
+st.markdown("## Feira de Tecnologia — 24 de Maio de 2025 da UNIFECAF")
 st.markdown(
     """
-    Apresentado na **Feira de Tecnologia da UNIFECAF**, onde  
-    visitantes poderão:
-    - Criar uma conta **na hora** (CPF fictício) e executar transações.
-    - Ver, em **segundos**, como o dashboard sinaliza atividades suspeitas.
-    - Acompanhar **ao vivo** painéis de tendência, radar de risco e heatmaps.
-    - **Simular** decisões de bloqueio/desbloqueio como um analista de fraude.
+    Apresentado na **Feira de Tecnologia da UNIFECAF**, convidamos você a
+    **testar a ferramenta na prática**:
+
+    1. **Assuma o papel de cliente (ou fraudador)** — crie uma conta, gere dados
+       sintéticos e execute transações normais ou suspeitas de propósito.
+    2. **Mude de chapéu para auditor** — acesse o painel administrador e opere o
+       Back-Office em tempo real: KPIs, gráficos interativos, radar de risco e alertas.
+    3. **Caçe os fraudadores ao vivo** — veja, em segundos, como o motor de regras
+       sinaliza cash-outs atípicos, ataques de velocidade e anomalias de comportamento,
+       e tome decisões como um analista de fraude de verdade.
     """
 )
 
 # ------------------------------------------------------------
-# 7) Tecnologias e Ferramentas
+# 7) Stack Tecnológico
 # ------------------------------------------------------------
-st.markdown("## Principais Ferramentas & Bibliotecas")
+st.markdown("## Stack Tecnológico")
 st.markdown(
     """
-    | Camada               | Tecnologias                                                                 |
-    |----------------------|------------------------------------------------------------------------------|
-    | Front-end            | Streamlit (UI & roteamento), Plotly Express (gráficos), IMask.js (máscaras) |
-    | Back-end             | FastAPI (REST API), SQLAlchemy (ORM)                                         |
-    | Banco de Dados       | MySQL 8 (InnoDB)                                                             |
-    | Dados Sintéticos     | Faker, NumPy, pandas                                                         |
-    | Detecção de Fraude   | Motor de regras em Python (`fraude.py`)                                      |
-    | Dev-Ops              | Docker & Docker-Compose, GitHub Actions (CI)                                 |
+    - **Frontend** — Streamlit (Python) aprimorado com injeções de **Vanilla JS**
+      para formatação reativa (máscaras de CPF, telefone e valores em tempo real).
+    - **Backend & Banco de Dados** — **Supabase** (PostgreSQL) operando como BaaS
+      para autenticação unificada e persistência de transações, usuários e logs.
+    - **Engenharia de Dados** — **Pandas** para tratamento pesado e cruzamento de
+      matrizes de dados em memória (agregações, filtros e joins sobre o dataset transacional).
+    - **Data Visualization** — **Plotly** para renderização de dashboards interativos
+      e de alta performance (tendências, heatmaps, scatter plots e radares de risco).
     """
 )
 
 # ------------------------------------------------------------
-# 8) Passo a passo de uso
+# 8) Segurança & Antifraude
+# ------------------------------------------------------------
+st.markdown("## Segurança & Antifraude")
+st.markdown(
+    """
+    - **RBAC (Role-Based Access Control)** — controle de acesso por papéis que blinda
+      as rotas da aplicação: clientes veem apenas o Home Banking; administradores
+      acessam Dashboard, Mestre e Gerar Dados. Rotas protegidas e sidebar filtrada
+      por role garantem isolamento entre as duas faces do ecossistema.
+    - **Motor de regras heurísticas** — cada transação é avaliada em tempo real por
+      um pipeline de regras em Python que monitora:
+      - **Cash-Outs atípicos** — saques ou transferências imediatamente após depósitos
+        elevados, ou cash-in alto em contas sem histórico recente.
+      - **Ataques de velocidade (lavagem)** — rajadas de 5+ transações em 5 minutos
+        pelo mesmo usuário ou por múltiplos usuários no mesmo IP.
+      - **Anomalias de geolocalização e comportamento** — limites por turno (dia/noite)
+        excedidos, tentativas de login falhas em sequência e padrões fora do perfil
+        habitual do cliente.
+    """
+)
+
+# ------------------------------------------------------------
+# 9) Passo a passo de uso
 # ------------------------------------------------------------
 st.markdown("## Como Funciona — passo a passo")
 st.markdown(
     """
-    1. **Home / Autenticação** — Usuário se cadastra e acessa sua conta.  
-    2. **Gerar Dados** — Gera um dataset de teste (3 000 usuários + 11 000 transações, ~10% marcadas).  
-    3. **Dashboard / Mestre** — Equipe de risco acompanha KPIs e alertas em tempo real.  
-    4. **Perfil do Usuário** — Cliente vê histórico, faz pagamentos/Pix, compras online.  
-    5. **Motor de Fraude** — Cada transação passa por 7 regras (limites por turno, 
-       cash-in sem histórico, trocas de dados + saque, etc.).  
-       Se alguma regra dispara, a transação chega sinalizada no dashboard.
+    1. **Home / Autenticação** — Cliente se cadastra via Supabase Auth e acessa sua conta.  
+    2. **Gerar Dados** — Administrador popula o ambiente com usuários e transações sintéticas.  
+    3. **Perfil do Usuário** — Cliente consulta saldo, histórico e executa Pix, pagamentos e compras.  
+    4. **Motor de Fraude** — Cada operação passa pelas regras heurísticas; suspeitas
+       recebem score e motivo de flag.  
+    5. **Dashboard / Mestre** — Equipe de auditoria acompanha KPIs, gráficos Plotly
+       e alertas em tempo real, caçando fraudadores conforme os dados entram.
     """
 )
 
 # ------------------------------------------------------------
-# 9) Equipe
+# 10) Equipe
 # ------------------------------------------------------------
 st.markdown("## Equipe")
 st.markdown(
@@ -118,7 +148,7 @@ st.markdown(
 )
 
 # ------------------------------------------------------------
-# 10) Agradecimentos e data de atualização
+# 11) Agradecimentos e data de atualização
 # ------------------------------------------------------------
 st.markdown("## Agradecimentos")
 st.markdown(

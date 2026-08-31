@@ -15,7 +15,7 @@ from datetime import date
 
 import streamlit as st
 
-from rbac import hide_admin_pages_from_sidebar
+from rbac import aplicar_regras_sidebar
 
 # ── Config ──────────────────────────────────────────────────────────
 st.set_page_config(page_title="ForsakenScan", layout="wide")
@@ -34,8 +34,7 @@ _SESSION = dict(
 for _k, _v in _SESSION.items():
     st.session_state.setdefault(_k, _v)
 
-if not st.session_state.get("is_admin"):
-    hide_admin_pages_from_sidebar()
+aplicar_regras_sidebar()
 
 # ── Helpers ─────────────────────────────────────────────────────────
 only_digits = lambda x: re.sub(r"\D", "", x or "")
@@ -75,7 +74,7 @@ def _logout() -> None:
 def _rollback_auth_user(user_id: str) -> bool:
     """Remove usuário do Auth se o insert em `usuarios` falhar (requer service role)."""
     try:
-        supabase.auth.admin.delete_user(user_id)
+        get_supabase_client(admin=True).auth.admin.delete_user(user_id)
         return True
     except Exception:
         try:
@@ -155,7 +154,7 @@ _, centro, _ = st.columns([1, 3, 1])
 with centro:
     logo = Path(__file__).parent / "Logo" / "Logo de ForsakenScan com Olho.png"
     if logo.exists():
-        st.image(str(logo), width="stretch")
+        st.image(str(logo), use_container_width=True)
     else:
         st.title("FORSAKENSCAN")
 
@@ -294,19 +293,23 @@ with centro:
                 rg_limpo = only_digits(rg)
                 tel_limpo = only_digits(telefone)
                 renda_str = (renda or "").strip()
+                renda_val = 0.0
                 if renda_str:
-                    renda_val = float(
-                        renda_str.replace("R$", "")
-                        .replace(".", "")
-                        .replace(",", ".")
-                        .strip()
-                    )
-                else:
-                    renda_val = 0.0
+                    try:
+                        renda_val = float(
+                            renda_str.replace("R$", "")
+                            .replace(".", "")
+                            .replace(",", ".")
+                            .strip()
+                        )
+                    except ValueError:
+                        renda_val = None
                 nasc_val = parse_date_br(data_nasc)
                 usuario_val = (username or email_cad.split("@")[0]).strip()
 
-                if cpf_limpo and len(cpf_limpo) != 11:
+                if renda_val is None:
+                    st.error("Renda mensal inválida.")
+                elif cpf_limpo and len(cpf_limpo) != 11:
                     st.error("CPF inválido.")
                 elif data_nasc and not nasc_val:
                     st.error("Data de nascimento inválida. Use DD/MM/AAAA.")

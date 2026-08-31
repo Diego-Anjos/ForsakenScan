@@ -16,10 +16,11 @@ if str(_FRONTEND) not in sys.path:
 import bootstrap  # noqa: F401 — raiz no sys.path
 from backend.db import get_supabase_client
 from backend.fraude import avaliar_transacao
-from rbac import hide_admin_pages_from_sidebar
+from rbac import aplicar_regras_sidebar
 
-if not st.session_state.get("is_admin"):
-    hide_admin_pages_from_sidebar()
+st.set_page_config(page_title="Meu Perfil", layout="wide")
+
+aplicar_regras_sidebar()
 
 supabase = get_supabase_client()
 
@@ -107,6 +108,11 @@ def _validar_senha_auth(email_login: str, senha: str) -> bool:
         return bool(resp.user)
     except Exception:
         return False
+    finally:
+        try:
+            supabase.auth.sign_out()
+        except Exception:
+            pass
 
 
 def _payload_transacao(
@@ -206,7 +212,6 @@ except Exception as e:
 # ------------------------------------------------------------------
 # Layout
 # ------------------------------------------------------------------
-st.set_page_config(page_title="Meu Perfil", layout="wide")
 st.markdown("""
 <style>
 body{background:linear-gradient(to right,#0f2027,#203a43,#2c5364)}
@@ -881,71 +886,77 @@ with tab_pwd:
 st.html(
     """
 <script>
-const doc = window.parent.document;
-const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+if (!window.__forsakenMaskBootstrapped) {
+    window.__forsakenMaskBootstrapped = true;
 
-function updateReactInput(element, value) {
-    nativeInputValueSetter.call(element, value);
-    element.dispatchEvent(new Event('input', { bubbles: true }));
-}
+    const doc = window.parent.document;
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
 
-function applyMaskToElement(input, type) {
-    if (input.dataset.masked) return;
-    input.dataset.masked = 'true';
+    function updateReactInput(element, value) {
+        nativeInputValueSetter.call(element, value);
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+    }
 
-    input.addEventListener('input', function(e) {
-        let v = e.target.value.replace(/\\D/g, '');
-        let formatted = v;
+    function applyMaskToElement(input, type) {
+        if (input.dataset.masked) return;
+        input.dataset.masked = 'true';
 
-        if (type === 'cpf') {
-            v = v.substring(0, 11);
-            formatted = v.replace(/(\\d{3})(\\d)/, '$1.$2').replace(/(\\d{3})(\\d)/, '$1.$2').replace(/(\\d{3})(\\d{1,2})$/, '$1-$2');
-        } else if (type === 'money') {
-            v = v.replace(/^0+/, '');
-            if (v === '') v = '0';
-            let num = parseInt(v) / 100;
-            formatted = num.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-        } else if (type === 'phone') {
-             v = v.substring(0, 11);
-             formatted = v.replace(/(\\d{2})(\\d)/, '($1) $2').replace(/(\\d{5})(\\d{1,4})$/, '$1-$2');
-        }
+        input.addEventListener('input', function(e) {
+            let v = e.target.value.replace(/\\D/g, '');
+            let formatted = v;
 
-        if (e.target.value !== formatted) {
-            updateReactInput(e.target, formatted);
-        }
-    });
-}
+            if (type === 'cpf') {
+                v = v.substring(0, 11);
+                formatted = v.replace(/(\\d{3})(\\d)/, '$1.$2').replace(/(\\d{3})(\\d)/, '$1.$2').replace(/(\\d{3})(\\d{1,2})$/, '$1-$2');
+            } else if (type === 'money') {
+                v = v.replace(/^0+/, '');
+                if (v === '') v = '0';
+                let num = parseInt(v) / 100;
+                formatted = num.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+            } else if (type === 'phone') {
+                 v = v.substring(0, 11);
+                 formatted = v.replace(/(\\d{2})(\\d)/, '($1) $2').replace(/(\\d{5})(\\d{1,4})$/, '$1-$2');
+            }
 
-function initMasks() {
-    const maskConfig = [
-        { selector: 'input[aria-label="CPF destinatário (opcional)"]', type: 'cpf' },
-        { selector: 'input[aria-label="Valor (R$)"]', type: 'money' },
-        { selector: 'input[aria-label="Valor unitário (R$)"]', type: 'money' },
-        { selector: 'input[aria-label="Valor solicitado (R$)"]', type: 'money' },
-        { selector: 'input[aria-label="CPF"]', type: 'cpf' },
-        { selector: 'input[aria-label="Telefone"]', type: 'phone' },
-        { selector: 'input[aria-label="Renda mensal"]', type: 'money' }
-    ];
-
-    maskConfig.forEach(config => {
-        doc.querySelectorAll(config.selector).forEach(el => applyMaskToElement(el, config.type));
-        // Fallback: widgets stTextInput pelo rótulo visível
-        const labelText = config.selector.replace(/^input\\[aria-label="/, '').replace(/"\\]$/, '');
-        doc.querySelectorAll('[data-testid="stTextInput"]').forEach(wrap => {
-            const labelEl = wrap.querySelector('label, p, span');
-            if (!labelEl) return;
-            if ((labelEl.textContent || '').trim() !== labelText) return;
-            const input = wrap.querySelector('input');
-            if (input) applyMaskToElement(input, config.type);
+            if (e.target.value !== formatted) {
+                updateReactInput(e.target, formatted);
+            }
         });
-    });
-}
+    }
 
-const observer = new MutationObserver((mutations) => {
+    function initMasks() {
+        const maskConfig = [
+            { selector: 'input[aria-label="CPF destinatário (opcional)"]', type: 'cpf' },
+            { selector: 'input[aria-label="Valor (R$)"]', type: 'money' },
+            { selector: 'input[aria-label="Valor unitário (R$)"]', type: 'money' },
+            { selector: 'input[aria-label="Valor solicitado (R$)"]', type: 'money' },
+            { selector: 'input[aria-label="CPF"]', type: 'cpf' },
+            { selector: 'input[aria-label="Telefone"]', type: 'phone' },
+            { selector: 'input[aria-label="Renda mensal"]', type: 'money' }
+        ];
+
+        maskConfig.forEach(config => {
+            doc.querySelectorAll(config.selector).forEach(el => applyMaskToElement(el, config.type));
+            const labelText = config.selector.replace(/^input\\[aria-label="/, '').replace(/"\\]$/, '');
+            doc.querySelectorAll('[data-testid="stTextInput"]').forEach(wrap => {
+                const labelEl = wrap.querySelector('label, p, span');
+                if (!labelEl) return;
+                if ((labelEl.textContent || '').trim() !== labelText) return;
+                const input = wrap.querySelector('input');
+                if (input) applyMaskToElement(input, config.type);
+            });
+        });
+    }
+
+    const observer = new MutationObserver((mutations) => {
+        initMasks();
+    });
+    observer.observe(doc.body, { childList: true, subtree: true });
+    window.addEventListener('beforeunload', () => {
+        observer.disconnect();
+    });
     initMasks();
-});
-observer.observe(doc.body, { childList: true, subtree: true });
-initMasks();
+}
 </script>
     """,
     unsafe_allow_javascript=True,

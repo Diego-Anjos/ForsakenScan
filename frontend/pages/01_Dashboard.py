@@ -17,15 +17,20 @@ _FRONTEND = Path(__file__).resolve().parent.parent
 if str(_FRONTEND) not in sys.path:
     sys.path.insert(0, str(_FRONTEND))
 import bootstrap  # noqa: F401 — raiz no sys.path
-from backend.db import get_supabase_client, fetch_all_df
-from rbac import require_admin
+from backend.db import fetch_all_df
+from rbac import aplicar_regras_sidebar, require_admin
 
 # ────────────────────────────────────────
 # Config
 # ────────────────────────────────────────
 st.set_page_config(page_title="Dashboard – Visão Geral", layout="wide")
+aplicar_regras_sidebar()
 require_admin()
-supabase = get_supabase_client()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_table(table: str) -> pd.DataFrame:
+    return fetch_all_df(table)
 
 
 # ── helpers ──
@@ -144,9 +149,9 @@ st.title("Visão Geral - Monitoramento")
 # ════════════════════════════════════════
 df_tx_raw = pd.DataFrame()
 try:
-    with st.spinner("Carregando transações …"):
-        df_tx_raw = fetch_all_df("transacoes")
-except Exception:
+    df_tx_raw = _load_table("transacoes")
+except Exception as exc:
+    st.error(f"Falha: {exc}")
     df_tx_raw = pd.DataFrame()
 
 if df_tx_raw.empty:
@@ -156,11 +161,11 @@ if df_tx_raw.empty:
     )
     st.stop()
 
-with st.spinner("Carregando dados auxiliares …"):
-    try:
-        df_usuarios = fetch_all_df("usuarios")
-    except Exception:
-        df_usuarios = pd.DataFrame()
+try:
+    df_usuarios = _load_table("usuarios")
+except Exception as exc:
+    st.error(f"Falha: {exc}")
+    df_usuarios = pd.DataFrame()
 
 df_tx_raw = _parse_dt(df_tx_raw, ["data_transacao"])
 
@@ -177,6 +182,7 @@ else:
     df_tx = df_tx_raw.copy() if not df_tx_raw.empty else pd.DataFrame()
 
 if not df_tx.empty:
+    df_tx["data_transacao"] = pd.to_datetime(df_tx["data_transacao"]).dt.tz_localize(None)
     df_tx["_suspeita"] = _suspeita_mask(df_tx)
 else:
     df_tx["_suspeita"] = pd.Series(dtype=bool)
@@ -983,8 +989,12 @@ with st.expander("📊 Estatísticas de Valores de Transação", expanded=False)
                 x="valor",
                 nbins=30,
                 title="Distribuição de Valores de Transação",
-                labels={"valor": "Valor (R$)"},
+                labels={"valor": "Valor (R$)", "count": "Quantidade de Transações"},
+                color_discrete_sequence=["#636EFA"],
             )
+            fig.update_layout(bargap=0.15)
+            fig.update_traces(marker_line_color="rgba(255,255,255,0.2)", marker_line_width=1)
+            fig.update_yaxes(title_text="Quantidade")
             st.plotly_chart(fig, use_container_width=True)
 
             resumo = pd.DataFrame({

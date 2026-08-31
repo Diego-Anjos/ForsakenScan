@@ -1,13 +1,9 @@
-streamlit
-fastapi
-uvicorn
-supabase
+streamlit>=1.37,<2
+supabase>=2.4,<3
 python-dotenv
 certifi
-sqlalchemy
-pydantic
-pandas
+pandas>=2.2,<3
 numpy
-plotly
+plotly>=5.22,<6
 faker
 streamlit-aggrid
